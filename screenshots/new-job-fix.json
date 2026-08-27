@@ -1,0 +1,36 @@
+{
+  "url": "http://127.0.0.1:8080/new",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "KREIA Studio",
+      "hasCanvas": false,
+      "bodyTextLen": 199,
+      "bodyTextHash": "0e6ee661578b91c152b247c972ea6bc77c0d706b1d500705e6da4bc4e8a5cb30",
+      "bodyTextPrefix": "KREIA STUDIO Mes projets Nouveau NOUVEAU PROJET Ajouter la vidéo",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/new-job-fix.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "KREIA Studio",
+      "hasCanvas": false,
+      "bodyTextLen": 187,
+      "bodyTextHash": "2ae06439bac2ecc482e5bf47aefea8dea7d4ed4d12a8a9fff40bc6636cc1ed15",
+      "bodyTextPrefix": "KREIA STUDIO Nouveau NOUVEAU PROJET Ajouter la vidéo Étape 1 / 3",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/new-job-fix-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/new-job-fix.json"
+}

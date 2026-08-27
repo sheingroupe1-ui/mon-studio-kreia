@@ -1,0 +1,36 @@
+{
+  "url": "http://127.0.0.1:8080/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "KREIA Studio",
+      "hasCanvas": false,
+      "bodyTextLen": 908,
+      "bodyTextHash": "aa08bebb4d02b132f12fc123f1fea8dd9fbf7d1500e7aec7929fa314ad8a6bed",
+      "bodyTextPrefix": "KREIA STUDIO Mes projets Nouveau STUDIO CRÉATIF KREIA Studio De ",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "KREIA Studio",
+      "hasCanvas": false,
+      "bodyTextLen": 896,
+      "bodyTextHash": "18a5c9495259997250c6c0a8e5c94a3d842218e5a1ba93eec37efe615c515bb5",
+      "bodyTextPrefix": "KREIA STUDIO Nouveau STUDIO CRÉATIF KREIA Studio De la vidéo au ",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-preview.json"
+}
