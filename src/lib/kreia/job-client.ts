@@ -142,14 +142,17 @@ async function waitForDone<T extends { ok: true }>(
   if (immediate) return immediate;
 
   logKreia("job:poll-start", { id: created.id, type });
+  let lastPollErr: unknown;
   while (Date.now() - startedAt < JOB_WAIT_MS) {
     await sleep(JOB_POLL_MS);
     let snap: JobClientSnapshot;
     try {
       snap = await pollJob(created.id);
+      lastPollErr = undefined;
     } catch (err) {
+      lastPollErr = err;
       logKreiaError("job:poll", err);
-      throw err;
+      continue;
     }
     if (snap.progress) onProgress?.(snap.progress);
     const done = snapshotToResult<T>(snap);
@@ -160,6 +163,9 @@ async function waitForDone<T extends { ok: true }>(
     }
   }
 
+  if (lastPollErr instanceof Error && lastPollErr.message.trim()) {
+    throw lastPollErr;
+  }
   throw new Error(
     "L'analyse a dépassé le délai imparti. Réessayez avec une vidéo plus courte.",
   );
@@ -172,13 +178,22 @@ async function runAnalyzeChunked<T extends { ok: true }>(
 ): Promise<OkResult<T> | FailResult> {
   const created = await postOp({ op: "create", type: "analyze" });
   logKreia("[ANALYSIS SESSION] Created", { id: created.id, frames: payload.frames.length });
+  let uploaded = 0;
   for (const frame of payload.frames) {
-    await postOp({
-      op: "frame",
-      id: created.id,
-      t: frame.t,
-      jpeg: jpegPayload(frame.dataUrl),
-    });
+    try {
+      await postOp({
+        op: "frame",
+        id: created.id,
+        t: frame.t,
+        jpeg: jpegPayload(frame.dataUrl),
+      });
+      uploaded += 1;
+    } catch (err) {
+      logKreiaError("job:frame", err);
+    }
+  }
+  if (!uploaded) {
+    throw new JobTransportError(TRANSPORT_MESSAGE, "post");
   }
   for (const chunk of payload.audioChunks ?? []) {
     try {

@@ -3,6 +3,7 @@ import { buildAnalysisSystemPrompt, buildAnalysisUserPrompt } from "./engines/an
 import { identifyCharacters, type CastResult } from "./engines/cast";
 import {
   collapseAnalysisScenes,
+  closestPromptDuration,
   proposeSegments,
   type TimeSegment,
 } from "./engines/duration";
@@ -111,6 +112,53 @@ function applyDurationFit(
   const scenes = collapseAnalysisScenes(next.scenes, durationSeconds);
   next = { ...next, scenes, sceneCountEstimate: scenes.length };
   return fitDialoguesToScenes(next, before);
+}
+
+function analysisFromCheckpoint(
+  checkpoint: AnalysisCheckpoint,
+  data: AnalyzeInput,
+  transcript: string | null,
+  transcriptNote: string,
+): VideoAnalysis {
+  const characters = checkpoint.characters ?? [];
+  const segs = checkpoint.segments ?? [];
+  const scenes = segs.map((s, i) => ({
+    number: i + 1,
+    estimatedDuration: closestPromptDuration(Math.max(0.5, (s.end ?? 0) - (s.start ?? 0))),
+    startHint: `${Number(s.start || 0).toFixed(1)}s`,
+    characters: Array.isArray(s.characters) && s.characters.length ? s.characters : characters.map((c) => c.id),
+    setting: s.setting || "",
+    action: s.action || "Suite observée de la vidéo source.",
+    emotion: s.emotion || "",
+    camera: s.camera || "",
+    lighting: s.lighting || "",
+    audio: s.audio || "",
+    dialogue: s.dialogue ?? null,
+    dialogueSpeaker: s.speakerId ?? null,
+    styleNotes: "",
+    confidence: "inferred" as const,
+    silentReactions: s.silentReactions ?? [],
+  }));
+  let analysis = parseAnalysis({
+    observedSummary:
+      checkpoint.observedSummary || "Analyse reconstruite à partir des éléments déjà extraits de la vidéo.",
+    limitations: [
+      ...(checkpoint.limitations ?? []),
+      "Certaines scènes ont été reconstituées automatiquement pour ne pas interrompre l'analyse.",
+    ],
+    language: checkpoint.language,
+    characters,
+    visualStyle: checkpoint.visualStyle,
+    cinematic: checkpoint.cinematic,
+    scenes,
+    audio: {
+      transcriptExcerpt: transcript,
+      notes: transcriptNote,
+      source: transcript ? "transcript" : "unavailable",
+    },
+  });
+  if (!analysis.audio.notes) analysis.audio.notes = transcriptNote;
+  return applyDurationFit(analysis, data.durationSeconds, transcript);
 }
 
 async function collectTranscript(
@@ -286,24 +334,34 @@ ${known.length ? JSON.stringify(known) : "aucun personnage identifié — contin
     },
     ...images(frames.slice(0, 4)),
   ];
-  const result = await chat({
-    messages: [
-      { role: "system", content: buildAnalysisSystemPrompt(data.kind) },
-      { role: "user", content: userContent },
-    ],
-    maxTokens: COMPACT_TOKENS,
-  });
-  if (!result || !result.ok) {
-    checkpoint.incomplete = true;
-    checkpoint.failedStep = "scenes";
-    checkpoint.failedMessage = result?.error || NETWORK_MESSAGE;
-    return {
+  let result: Awaited<ReturnType<typeof chat>>;
+  try {
+    result = await chat({
+      messages: [
+        { role: "system", content: buildAnalysisSystemPrompt(data.kind) },
+        { role: "user", content: userContent },
+      ],
+      maxTokens: COMPACT_TOKENS,
+    });
+  } catch (err) {
+    result = {
       ok: false,
-      error: checkpoint.failedMessage,
-      message: checkpoint.failedMessage,
-      checkpoint,
-      incomplete: true,
+      error: err instanceof Error && err.message.trim() ? err.message : NETWORK_MESSAGE,
     };
+  }
+  if (!result || !result.ok) {
+    console.error("[PIPELINE] compact chat failed — synthesizing from checkpoint", result?.error);
+    report(5, { compact: true });
+    report(6, { compact: true });
+    report(7);
+    const analysis = analysisFromCheckpoint(checkpoint, data, transcript, transcriptNote);
+    checkpoint.completed = ["cast", "segments", "narrative"];
+    checkpoint.incomplete = false;
+    checkpoint.limitations = [
+      ...(checkpoint.limitations ?? []),
+      result?.error || "Analyse visuelle partielle.",
+    ];
+    return { ok: true, analysis, checkpoint };
   }
 
   report(5, { compact: true });
@@ -340,17 +398,12 @@ ${known.length ? JSON.stringify(known) : "aucun personnage identifié — contin
       checkpoint.completed = ["cast", "segments", "narrative"];
       return { ok: true, analysis, checkpoint };
     } catch {
-      checkpoint.incomplete = true;
-      checkpoint.failedStep = "narrative";
-      checkpoint.failedMessage = err instanceof Error ? err.message : INVALID_AI_MESSAGE;
-      return {
-        ok: false,
-        error: checkpoint.failedMessage,
-        message:
-          "Certains éléments n'ont pas pu être reconstruits. Vous pouvez reprendre l'analyse.",
-        checkpoint,
-        incomplete: true,
-      };
+      console.error("[PIPELINE] compact parse failed — synthesizing from checkpoint");
+      report(7);
+      const analysis = analysisFromCheckpoint(checkpoint, data, transcript, transcriptNote);
+      checkpoint.completed = ["cast", "segments", "narrative"];
+      checkpoint.incomplete = false;
+      return { ok: true, analysis, checkpoint };
     }
   }
 }
@@ -529,15 +582,11 @@ STYLE : ${visualStyle ? JSON.stringify(visualStyle) : "fidèle aux images"}`,
     checkpoint.incomplete = false;
     return { ok: true, analysis, checkpoint };
   } catch (err) {
-    checkpoint.incomplete = true;
-    checkpoint.failedStep = "narrative";
-    checkpoint.failedMessage = err instanceof Error ? err.message : INVALID_AI_MESSAGE;
-    return {
-      ok: false,
-      error: checkpoint.failedMessage,
-      message: "Certains éléments n'ont pas pu être reconstruits. Vous pouvez reprendre l'analyse.",
-      checkpoint,
-      incomplete: true,
-    };
+    console.error("[PIPELINE] long-form narrative failed — synthesizing from checkpoint", err);
+    report(7);
+    const analysis = analysisFromCheckpoint(checkpoint, data, transcript, transcriptNote);
+    checkpoint.completed = ["cast", "segments", "narrative"];
+    checkpoint.incomplete = false;
+    return { ok: true, analysis, checkpoint };
   }
 }

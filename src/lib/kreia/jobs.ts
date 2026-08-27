@@ -144,8 +144,30 @@ export function isJobType(value: unknown): value is JobType {
 
 export function getJob(id: string): JobSnapshot | null {
   prune();
-  const job = load(id);
-  return job ? snapshot(job) : null;
+  const mem = store().get(id);
+  const disk = readJob(id);
+
+  if (disk && (disk.status === "ok" || disk.status === "error")) {
+    if (mem) {
+      if (mem.status !== disk.status || mem.updatedAt < disk.updatedAt) {
+        mem.status = disk.status;
+        mem.result = disk.result;
+        mem.error = disk.error;
+        mem.progress = disk.progress;
+        mem.updatedAt = disk.updatedAt;
+      }
+      return snapshot(mem);
+    }
+    const record = fromPersisted(disk);
+    store().set(id, record);
+    return snapshot(record);
+  }
+
+  if (mem) return snapshot(mem);
+  if (!disk) return null;
+  const record = fromPersisted(disk);
+  store().set(id, record);
+  return snapshot(record);
 }
 
 function toDataUrl(jpeg: string): string | null {
