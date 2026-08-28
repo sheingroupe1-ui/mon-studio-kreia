@@ -16,6 +16,10 @@ export type AnalysisProgress = {
   label: string;
   segmentsDone?: number;
   segmentsTotal?: number;
+  castBatchesDone?: number;
+  castBatchesTotal?: number;
+  productionScenesDone?: number;
+  productionScenesTotal?: number;
   compact?: boolean;
   debug?: string;
 };
@@ -31,6 +35,10 @@ export function progressAt(step: number, extra?: Partial<AnalysisProgress>): Ana
   if (extra?.compact) progress.compact = extra.compact;
   if (typeof extra?.segmentsDone === "number") progress.segmentsDone = extra.segmentsDone;
   if (typeof extra?.segmentsTotal === "number") progress.segmentsTotal = extra.segmentsTotal;
+  if (typeof extra?.castBatchesDone === "number") progress.castBatchesDone = extra.castBatchesDone;
+  if (typeof extra?.castBatchesTotal === "number") progress.castBatchesTotal = extra.castBatchesTotal;
+  if (typeof extra?.productionScenesDone === "number") progress.productionScenesDone = extra.productionScenesDone;
+  if (typeof extra?.productionScenesTotal === "number") progress.productionScenesTotal = extra.productionScenesTotal;
   if (extra?.debug) progress.debug = extra.debug;
   return progress;
 }

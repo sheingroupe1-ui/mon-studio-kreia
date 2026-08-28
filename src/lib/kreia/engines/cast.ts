@@ -12,6 +12,8 @@ import type {
 } from "../types";
 
 const CAST_TOKENS = 4200;
+export const CAST_BATCH_SIZE = 3;
+const CAST_MAX_FRAMES = 12;
 
 export type CastResult = {
   characters: CharacterSheet[];
@@ -21,6 +23,9 @@ export type CastResult = {
   limitations: string[];
   language: string | null;
   fatal?: { error: string; message: string };
+  done: boolean;
+  batchIndex: number;
+  batchCount: number;
 };
 
 function logPipe(step: number | string, msg: string, extra?: unknown) {
@@ -177,19 +182,21 @@ export function mergeCharacters(
   return normalizeCharacterIds(next, kind);
 }
 
-function pickOverview(frames: FrameCapture[]): FrameCapture[] {
+export function pickOverview(frames: FrameCapture[]): FrameCapture[] {
   const valid = frames.filter(
     (f) => typeof f.dataUrl === "string" && f.dataUrl.startsWith("data:image/") && f.dataUrl.length > 32,
   );
-  if (valid.length <= 4) return valid;
-  const marks = valid.length >= 8 ? [0, 0.2, 0.4, 0.6, 0.8, 1] : [0, 0.33, 0.66, 1];
-  const picked: FrameCapture[] = [];
-  for (const m of marks) {
-    const target = valid[0]!.t + m * (valid.at(-1)!.t - valid[0]!.t);
-    const nearest = valid.reduce((a, b) => (Math.abs(b.t - target) < Math.abs(a.t - target) ? b : a));
-    if (!picked.some((p) => p.t === nearest.t)) picked.push(nearest);
+  return [...valid].sort((a, b) => a.t - b.t).slice(0, CAST_MAX_FRAMES);
+}
+
+export function listCastBatches(frames: FrameCapture[]): FrameCapture[][] {
+  const overview = pickOverview(frames);
+  if (!overview.length) return [[]];
+  const batches: FrameCapture[][] = [];
+  for (let i = 0; i < overview.length; i += CAST_BATCH_SIZE) {
+    batches.push(overview.slice(i, i + CAST_BATCH_SIZE));
   }
-  return picked;
+  return batches;
 }
 
 export async function identifyCharacters(args: {
@@ -199,12 +206,17 @@ export async function identifyCharacters(args: {
   width: number;
   height: number;
   userNotes?: string;
+  batchIndex?: number;
+  knownCharacters?: CharacterSheet[];
 }): Promise<CastResult> {
   const empty: CastResult = {
-    characters: [],
+    characters: args.knownCharacters ?? [],
     observedSummary: "",
     limitations: [],
     language: null,
+    done: true,
+    batchIndex: 0,
+    batchCount: 1,
   };
 
   try {
@@ -213,16 +225,33 @@ export async function identifyCharacters(args: {
     logPipe(2, `Video source available: ${sourceOk}`);
     const rawCount = sourceOk ? args.frames.length : 0;
     logPipe(3, `Frames count: ${rawCount}`);
-    const overview = pickOverview(args.frames ?? []);
-    const framesValid = overview.length > 0;
-    logPipe(4, `Frames valid: ${framesValid}`, { overview: overview.length, times: overview.map((f) => f.t) });
+    const batches = listCastBatches(args.frames ?? []);
+    const batchCount = Math.max(1, batches.length);
+    const batchIndex = Math.max(0, Math.min(args.batchIndex ?? 0, batchCount - 1));
+    const batch = batches[batchIndex] ?? [];
+    const framesValid = batch.some(
+      (f) => typeof f.dataUrl === "string" && f.dataUrl.startsWith("data:image/") && f.dataUrl.length > 32,
+    );
+    logPipe(4, `Frames valid: ${framesValid}`, {
+      overview: pickOverview(args.frames ?? []).length,
+      batch: batchIndex + 1,
+      batchCount,
+      times: batch.map((f) => f.t),
+    });
 
+    const known = args.knownCharacters ?? [];
     if (!framesValid) {
-      logPipeError("4", "No usable frames");
+      logPipeError("4", "No usable frames in batch", { batch: batchIndex + 1 });
+      const characters = known.length ? known : [placeholderCharacter(args.kind, 0)];
       return {
         ...empty,
-        characters: [placeholderCharacter(args.kind, 0)],
-        limitations: ["Aucune image exploitable — personnage temporaire créé, l'analyse continue."],
+        characters,
+        limitations: known.length
+          ? [`Lot ${batchIndex + 1}/${batchCount} sans image exploitable — poursuite.`]
+          : ["Aucune image exploitable — personnage temporaire créé, l'analyse continue."],
+        done: batchIndex + 1 >= batchCount,
+        batchIndex,
+        batchCount,
       };
     }
 
@@ -235,37 +264,25 @@ export async function identifyCharacters(args: {
           ? "ANGEL_CHARACTER_01… pour les anges, CHARACTER_01… pour les humains"
           : "CHARACTER_01…";
 
-    // Spread frames across the video so secondary / brief / background characters are seen.
-    const batches: FrameCapture[][] = [];
-    for (let i = 0; i < overview.length; i += 3) {
-      batches.push(overview.slice(i, i + 3));
-    }
-    let merged: CharacterSheet[] = [];
+    const img = imagesOf(batch);
+    logPipe(5, "Preparing analysis request", { batch: batchIndex + 1, images: img.length });
+    console.info("[CHARACTERS] Preparing AI request", { batch: batchIndex + 1, images: img.length });
+    console.info("[CHARACTERS] AI request START");
+    let merged: CharacterSheet[] = known;
     let visualStyle: VisualStyleAnalysis | undefined;
     let cinematic: CinematicLanguage | undefined;
     let observedSummary = "";
     const limitations: string[] = [];
     let language: string | null = null;
-    let anyOk = false;
-    let lastError = "";
 
-    for (const [batchIndex, batch] of batches.entries()) {
-      const img = imagesOf(batch);
-      if (!img.length) {
-        logPipeError("4b", "batch has no valid image payload", { batch: batchIndex + 1 });
-        continue;
-      }
-      logPipe(5, "Preparing analysis request", { batch: batchIndex + 1, images: img.length });
-      console.info("[CHARACTERS] Preparing AI request", { batch: batchIndex + 1, images: img.length });
-      console.info("[CHARACTERS] AI request START");
-      let cast: Awaited<ReturnType<typeof chat>> | undefined;
-      try {
-        logPipe(6, "Request sent", { batch: batchIndex + 1 });
-        cast = await chat({
-          messages: [
-            {
-              role: "system",
-              content: `Tu identifies TOUS les PERSONNAGES visibles — humains OU non humains. N'analyse PAS le style visuel. Pas de découpage de scènes. ${fruit}${angel}
+    let cast: Awaited<ReturnType<typeof chat>> | undefined;
+    try {
+      logPipe(6, "Request sent", { batch: batchIndex + 1 });
+      cast = await chat({
+        messages: [
+          {
+            role: "system",
+            content: `Tu identifies TOUS les PERSONNAGES visibles — humains OU non humains. N'analyse PAS le style visuel. Pas de découpage de scènes. ${fruit}${angel}
 characterType ∈ human | fruit_humanoid | angel | animated_character | animal_humanoid | fantasy_character | unknown_character
 RÈGLES D'IDENTIFICATION
 - Liste CHAQUE personnage distinct : premier plan, arrière-plan, plans larges, plans serrés, silencieux, apparition brève (même 2–3 s), non-humain.
@@ -275,87 +292,88 @@ RÈGLES D'IDENTIFICATION
 - 0 personnage vraiment visible = "characters": []. unknown_character est VALIDE. Jamais d'échec.
 IDs : ${idScheme}. name = null si inconnu.
 JSON objet : { "observedSummary":"", "limitations":[], "language": null, "characters": [{ "id":"", "designation":"", "name":null, "nameConfidence":"inferred", "characterType":"", "ageApparent":"", "appearance":"", "hair":"", "eyes":"", "complexion":"", "morphology":"", "clothing":"", "accessories":"", "distinctiveFeatures":"", "species":"", "bodyStructure":"", "wings":"", "halo":"", "role":"", "prominence":"principal|secondary|punctual", "firstSeen":"", "lastSeen":"", "notes":"" }] }`,
-            },
-            {
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text: `Durée ${Number(args.durationSeconds || 0).toFixed(1)} s, ${args.width || 0}×${args.height || 0}, type ${args.kind}.
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `Durée ${Number(args.durationSeconds || 0).toFixed(1)} s, ${args.width || 0}×${args.height || 0}, type ${args.kind}.
 Photogrammes ${batch.map((f) => Number(f.t || 0).toFixed(1) + "s").join(", ")} — parcours toute l'image, pas seulement le centre.
 Déjà identifiés : ${merged.length ? merged.map((c) => `${c.id} ${c.designation} (${c.appearance || c.clothing || "—"})`).join(" · ") : "aucun — cherche-les tous"}.
 ${args.userNotes ?? ""}
 Si un visage déjà listé réapparaît, réutilise le même ID. Sinon crée un nouveau personnage.`,
-                },
-                ...img,
-              ],
-            },
-          ],
-          maxTokens: CAST_TOKENS,
-        });
-      } catch (err) {
-        logPipeError("6-7", err, { batch: batchIndex + 1 });
-        lastError = err instanceof Error ? err.message : "appel IA interrompu";
-        limitations.push(`Image ${batchIndex + 1} ignorée : ${lastError}`);
-        continue;
-      }
-
-      logPipe(7, "Response received", { batch: batchIndex + 1, hasValue: Boolean(cast) });
-      console.info("[CHARACTERS] AI response RECEIVED", {
-        batch: batchIndex + 1,
-        ok: Boolean(cast && "ok" in cast && cast.ok),
-        length: cast && "ok" in cast && cast.ok ? cast.text.length : 0,
-        error: cast && "error" in cast ? cast.error : undefined,
+              },
+              ...img,
+            ],
+          },
+        ],
+        maxTokens: CAST_TOKENS,
       });
-      const keys = cast && typeof cast === "object" ? Object.keys(cast) : [];
-      logPipe(8, "Response status", { ok: Boolean(cast && "ok" in cast && cast.ok), keys });
-      const contentExists = Boolean(cast && "ok" in cast && cast.ok && typeof cast.text === "string" && cast.text.trim());
-      logPipe(9, `Response content exists: ${contentExists}`, {
-        chars: cast && "ok" in cast && cast.ok ? cast.text.length : 0,
-      });
+    } catch (err) {
+      logPipeError("6-7", err, { batch: batchIndex + 1 });
+      const lastError = err instanceof Error ? err.message : "appel IA interrompu";
+      limitations.push(`Image ${batchIndex + 1} ignorée : ${lastError}`);
+      const done = batchIndex + 1 >= batchCount;
+      return {
+        characters: done && !merged.length ? [placeholderCharacter(args.kind, 0)] : merged,
+        limitations,
+        observedSummary: "",
+        language: null,
+        done,
+        batchIndex,
+        batchCount,
+      };
+    }
 
-      if (!cast || !("ok" in cast) || !cast.ok) {
-        lastError = (cast && "error" in cast && typeof cast.error === "string" && cast.error) || "réponse IA absente";
-        logPipeError("8", lastError, { batch: batchIndex + 1 });
-        limitations.push(`Image ${batchIndex + 1} ignorée : ${lastError}`);
-        continue;
-      }
+    logPipe(7, "Response received", { batch: batchIndex + 1, hasValue: Boolean(cast) });
+    console.info("[CHARACTERS] AI response RECEIVED", {
+      batch: batchIndex + 1,
+      ok: Boolean(cast && "ok" in cast && cast.ok),
+      length: cast && "ok" in cast && cast.ok ? cast.text.length : 0,
+      error: cast && "error" in cast ? cast.error : undefined,
+    });
+    const keys = cast && typeof cast === "object" ? Object.keys(cast) : [];
+    logPipe(8, "Response status", { ok: Boolean(cast && "ok" in cast && cast.ok), keys });
+    const contentExists = Boolean(cast && "ok" in cast && cast.ok && typeof cast.text === "string" && cast.text.trim());
+    logPipe(9, `Response content exists: ${contentExists}`, {
+      chars: cast && "ok" in cast && cast.ok ? cast.text.length : 0,
+    });
 
+    if (!cast || !("ok" in cast) || !cast.ok) {
+      const lastError = (cast && "error" in cast && typeof cast.error === "string" && cast.error) || "réponse IA absente";
+      logPipeError("8", lastError, { batch: batchIndex + 1 });
+      limitations.push(`Image ${batchIndex + 1} ignorée : ${lastError}`);
+    } else {
       logPipe(10, "Parsing response");
-      let parsed;
       try {
-        parsed = parseCastResult(cast.text, args.kind);
+        const parsed = parseCastResult(cast.text, args.kind);
+        logPipe(11, "Parsed successfully", { count: parsed.characters.length });
+        logPipe(12, "Characters result created", {
+          ids: parsed.characters.map((c) => c.id),
+        });
+        merged = mergeCharacters(merged, parsed.characters, args.kind);
+        visualStyle = parsed.visualStyle;
+        cinematic = parsed.cinematic;
+        observedSummary = parsed.observedSummary;
+        language = parsed.language;
+        limitations.push(...(parsed.limitations ?? []));
       } catch (err) {
         logPipeError("10", err, { receivedResponse: cast.text.slice(0, 240) });
         limitations.push(`Image ${batchIndex + 1} : parse impossible, image ignorée.`);
-        continue;
       }
-      logPipe(11, "Parsed successfully", { count: parsed.characters.length });
-      anyOk = true;
-      logPipe(12, "Characters result created", {
-        ids: parsed.characters.map((c) => c.id),
-      });
-      merged = mergeCharacters(merged, parsed.characters, args.kind);
-      if (parsed.visualStyle?.lockedStylePhrase && !visualStyle) visualStyle = parsed.visualStyle;
-      if (parsed.cinematic?.dominantShots?.length && !cinematic) cinematic = parsed.cinematic;
-      if (parsed.observedSummary && !observedSummary) observedSummary = parsed.observedSummary;
-      if (parsed.language && !language) language = parsed.language;
-      limitations.push(...(parsed.limitations ?? []));
     }
 
-    if (!merged.length) {
-      limitations.push(
-        anyOk
-          ? "Aucun personnage clairement identifié. L'analyse continue avec un personnage temporaire."
-          : `Identification partielle : ${lastError || "aucune réponse exploitable"}. L'analyse continue.`,
-      );
+    const done = batchIndex + 1 >= batchCount;
+    if (done && !merged.length) {
+      limitations.push("Aucun personnage clairement identifié. L'analyse continue avec un personnage temporaire.");
       merged = [placeholderCharacter(args.kind, 0)];
       logPipe(12, "Fallback placeholder character", { id: merged[0]?.id });
     }
 
     const characters = normalizeCharacterIds(merged, args.kind);
-    logPipe(13, "Updating application state", { count: characters.length });
-    logPipe(14, "Moving to next step");
+    logPipe(13, "Updating application state", { count: characters.length, done, batch: batchIndex + 1 });
+    logPipe(14, done ? "Moving to next step" : "Cast batch complete — more batches remain");
     return {
       characters,
       visualStyle,
@@ -363,15 +381,20 @@ Si un visage déjà listé réapparaît, réutilise le même ID. Sinon crée un 
       observedSummary,
       limitations: [...new Set(limitations.filter(Boolean))],
       language,
+      done,
+      batchIndex,
+      batchCount,
     };
   } catch (err) {
     logPipeError("identifyCharacters", err);
+    const known = args.knownCharacters ?? [];
     return {
       ...empty,
-      characters: [placeholderCharacter(args.kind, 0)],
+      characters: known.length ? known : [placeholderCharacter(args.kind, 0)],
       limitations: [
         `Identification partielle (${err instanceof Error ? err.message : "erreur technique"}). L'analyse continue.`,
       ],
+      done: true,
     };
   }
 }

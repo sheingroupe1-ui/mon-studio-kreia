@@ -1,6 +1,6 @@
 import { progressAt, type AnalysisProgress } from "./analysis-stages";
 import { extractAudioChunks } from "./audio";
-import { capturePlan, extractFrames, loadVideoElement, toAnalysisFrames } from "./frames";
+import { extractFrames, loadVideoElement, MAX_FRAMES, toAnalysisFrames } from "./frames";
 import { isPostTransportError, runKreiaJob } from "./job-client";
 import { fitAnalyzePayload, logKreia, logKreiaError } from "./rpc";
 import { createId } from "./ids";
@@ -12,6 +12,7 @@ import type {
   FrameCapture,
   ProjectKind,
   ReconstructionMode,
+  ProductionPlan,
   VideoAnalysis,
   VideoMeta,
 } from "./types";
@@ -43,13 +44,20 @@ export type AnalysisRunInput = {
 };
 
 export type AnalysisRunResult =
-  | { ok: true; analysis: VideoAnalysis; projectId: string }
+  | { ok: true; analysis: VideoAnalysis; production?: ProductionPlan; projectId: string }
   | {
       ok: true;
       awaitingCastReview: true;
       projectId: string;
       checkpoint: AnalysisCheckpoint;
       characters: CharacterSheet[];
+    }
+  | {
+      ok: true;
+      awaitingDialogueReview: true;
+      projectId: string;
+      checkpoint: AnalysisCheckpoint;
+      analysis: VideoAnalysis;
     }
   | {
       ok: false;
@@ -153,9 +161,8 @@ export async function runFullVideoAnalysis(input: AnalysisRunInput): Promise<Ana
         : { ...emptyCheckpoint(), userBrief: input.brief };
 
     const formattedNotes = [formatUserBrief(input.brief), input.notes].filter(Boolean).join("\n");
-    const planned = capturePlan(input.meta.durationSeconds);
     const analysisFrames = await toAnalysisFrames(extracted, {
-      maxFrames: Math.min(6, Math.max(planned.analysis, 4)),
+      maxFrames: MAX_FRAMES,
     });
     let audioChunks: AudioChunk[] = [];
     if (input.file && !(input.resume && checkpoint.transcript)) {
@@ -186,7 +193,9 @@ export async function runFullVideoAnalysis(input: AnalysisRunInput): Promise<Ana
       return runKreiaJob<{
         ok: true;
         analysis?: VideoAnalysis;
+        production?: ProductionPlan;
         awaitingCastReview?: boolean;
+        awaitingDialogueReview?: boolean;
         checkpoint?: AnalysisCheckpoint;
         characters?: CharacterSheet[];
       }>(
@@ -198,6 +207,7 @@ export async function runFullVideoAnalysis(input: AnalysisRunInput): Promise<Ana
           width: input.meta.width,
           height: input.meta.height,
           kind: input.kind,
+          mode: input.mode,
           userNotes: formattedNotes,
           userBrief: input.brief,
           chosenStyleId: input.chosenStyleId,
@@ -246,6 +256,23 @@ export async function runFullVideoAnalysis(input: AnalysisRunInput): Promise<Ana
         characters: result.characters ?? result.checkpoint?.characters ?? [],
       };
     }
+    if (result.awaitingDialogueReview) {
+      const analysis = result.analysis ?? result.checkpoint?.analysis;
+      if (!analysis) {
+        return {
+          ok: false,
+          error: "Les dialogues n'ont pas pu être préparés pour validation.",
+          checkpoint: result.checkpoint,
+        };
+      }
+      return {
+        ok: true,
+        awaitingDialogueReview: true,
+        projectId,
+        checkpoint: result.checkpoint ?? checkpoint ?? emptyCheckpoint(),
+        analysis,
+      };
+    }
     if (!result.analysis) {
       return {
         ok: false,
@@ -253,7 +280,7 @@ export async function runFullVideoAnalysis(input: AnalysisRunInput): Promise<Ana
         checkpoint: result.checkpoint,
       };
     }
-    return { ok: true, analysis: result.analysis, projectId };
+    return { ok: true, analysis: result.analysis, production: result.production, projectId };
   } catch (err) {
     logKreiaError("analyze:orchestrator", err);
     return {

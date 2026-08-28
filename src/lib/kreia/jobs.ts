@@ -1,7 +1,6 @@
 import { progressAt, type AnalysisProgress } from "./analysis-stages";
 import {
   NETWORK_MESSAGE,
-  runGenerate,
   runReviseAnalysis,
   runReviseProduction,
   type OkErr,
@@ -16,6 +15,7 @@ import {
 } from "./job-store";
 import { ideaProgressAt, IDEA_PHASE_ORDER, resumeIdeaPhase } from "./idea-stages";
 import { runIdeaSlice } from "./idea-pipeline";
+import { runProductionSlice } from "./engines/production";
 import { runPipelineSlice, type PipelinePhase } from "./pipeline";
 import type {
   AnalysisCheckpoint,
@@ -211,6 +211,7 @@ function progressForPhase(phase: PipelinePhase): AnalysisProgress {
   if (phase === "compact") return progressAt(5, { compact: true });
   if (phase === "segment") return progressAt(5);
   if (phase === "narrative") return progressAt(6);
+  if (phase === "produce") return progressAt(7);
   return progressAt(7);
 }
 
@@ -224,6 +225,7 @@ function isPhase(value: unknown): value is PipelinePhase {
     value === "compact" ||
     value === "segment" ||
     value === "narrative" ||
+    value === "produce" ||
     value === "done"
   );
 }
@@ -263,9 +265,26 @@ async function runAnalyzeSlice(job: JobRecord): Promise<void> {
     job.phase = slice.nextPhase;
     return;
   }
+  if (slice.awaitingDialogueReview) {
+    job.status = "ok";
+    job.result = {
+      ok: true,
+      awaitingDialogueReview: true,
+      checkpoint: slice.checkpoint,
+      analysis: slice.analysis,
+    };
+    job.error = undefined;
+    job.phase = slice.nextPhase;
+    return;
+  }
   if (slice.done && slice.analysis) {
     job.status = "ok";
-    job.result = { ok: true, analysis: slice.analysis, checkpoint: slice.checkpoint };
+    job.result = {
+      ok: true,
+      analysis: slice.analysis,
+      production: slice.production,
+      checkpoint: slice.checkpoint,
+    };
     job.error = undefined;
     job.phase = "done";
     return;
@@ -325,13 +344,41 @@ async function runIdeaJobSlice(job: JobRecord): Promise<void> {
   }
 }
 
+async function runProduceJobSlice(job: JobRecord): Promise<void> {
+  const data = (job.payload && typeof job.payload === "object" ? job.payload : {}) as GenerateInput;
+  job.progress = progressAt(7);
+  await flush(job, true);
+  const slice = await runProductionSlice({
+    ...data,
+    checkpoint: (job.checkpoint as AnalysisCheckpoint | undefined) ?? data.checkpoint,
+  });
+  job.checkpoint = slice.checkpoint;
+  job.progress = slice.progress;
+  job.debug = `produce ${slice.progress.productionScenesDone ?? 0}/${slice.progress.productionScenesTotal ?? 0}`;
+  if (slice.done && slice.production) {
+    job.status = "ok";
+    job.result = { ok: true, production: slice.production, checkpoint: slice.checkpoint };
+    job.error = undefined;
+    job.phase = "done";
+    return;
+  }
+  if (slice.done && slice.error) {
+    job.status = "error";
+    job.error = slice.error;
+    job.result = { ok: false, error: slice.error, checkpoint: slice.checkpoint, incomplete: true };
+    job.phase = "done";
+    return;
+  }
+  job.phase = "produce";
+}
+
 async function runSingleShot(job: JobRecord): Promise<void> {
   const payload = job.payload;
   let out: OkErr<Record<string, unknown>>;
   try {
     switch (job.type) {
       case "generate":
-        out = await runGenerate(payload as GenerateInput);
+        out = { ok: false, error: NETWORK_MESSAGE };
         break;
       case "revise-analysis":
         out = await runReviseAnalysis(payload as ReviseAnalysisInput);
@@ -385,6 +432,7 @@ export async function advanceJob(id: string): Promise<JobSnapshot | null> {
   try {
     if (job.type === "analyze") await runAnalyzeSlice(job);
     else if (job.type === "ideate") await runIdeaJobSlice(job);
+    else if (job.type === "generate") await runProduceJobSlice(job);
     else await runSingleShot(job);
   } catch (err) {
     console.error("[ANALYSIS FAILED]", {
@@ -487,6 +535,9 @@ export async function startPendingJob(
   if (job.type === "ideate") {
     job.checkpoint = (base.checkpoint as IdeaCheckpoint | undefined) ?? job.checkpoint;
   }
+  if (job.type === "generate") {
+    job.checkpoint = (base.checkpoint as AnalysisCheckpoint | undefined) ?? job.checkpoint;
+  }
   job.payload = base;
   job.status = "running";
   job.phase =
@@ -494,7 +545,9 @@ export async function startPendingJob(
       ? "validate"
       : job.type === "ideate"
         ? resumeIdeaPhase(job.checkpoint as IdeaCheckpoint | undefined)
-        : "generate";
+        : job.type === "generate"
+          ? "produce"
+          : "generate";
   job.working = false;
   await flush(job);
   const advanced = await advanceJob(job.id);
@@ -537,6 +590,7 @@ export async function identifyOnly(id: string): Promise<Record<string, unknown>>
       width: Number(payload.width) || 0,
       height: Number(payload.height) || 0,
       userNotes: typeof payload.userNotes === "string" ? payload.userNotes : undefined,
+      batchIndex: 0,
     });
     console.info("[CHARACTERS] ISOLATION TEST END", { id, count: cast.characters.length });
     return { success: true, characters: cast.characters, count: cast.characters.length };

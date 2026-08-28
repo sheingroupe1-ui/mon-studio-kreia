@@ -121,9 +121,13 @@ function PerformanceFields({
 export function DialogueBoard({
   analysis,
   onChange,
+  onValidate,
+  validating,
 }: {
   analysis: VideoAnalysis;
   onChange?: (next: VideoAnalysis) => void;
+  onValidate?: () => void;
+  validating?: boolean;
 }) {
   const lines = (analysis.dialogues?.lines ?? [])
     .slice()
@@ -148,9 +152,16 @@ export function DialogueBoard({
 
   if (!lines.length) {
     return (
-      <p className="text-sm text-[var(--fg-muted)]">
-        Aucun dialogue identifiable. Rien n’a été inventé.
-      </p>
+      <div className="space-y-3">
+        <p className="text-sm text-[var(--fg-muted)]">
+          Aucun dialogue identifiable. Rien n’a été inventé.
+        </p>
+        {onValidate ? (
+          <Button type="button" disabled={validating} onClick={onValidate}>
+            Valider les dialogues
+          </Button>
+        ) : null}
+      </div>
     );
   }
 
@@ -292,6 +303,11 @@ export function DialogueBoard({
           );
         })}
       </ul>
+      {onValidate ? (
+        <Button type="button" disabled={validating} onClick={onValidate}>
+          Valider les dialogues
+        </Button>
+      ) : null}
     </div>
   );
 }

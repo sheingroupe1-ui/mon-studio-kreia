@@ -63,6 +63,12 @@ describe("utterancesFromTranscript", () => {
     assert.match(u[0] ?? "", /promis de ne jamais partir/);
     assert.match(u[1] ?? "", /pas le choix/);
   });
+
+  it("keeps an ellipsis replica as a single utterance", () => {
+    const u = utterancesFromTranscript("Je t'en prie... ne me quitte pas.");
+    assert.equal(u.length, 1);
+    assert.match(u[0] ?? "", /ne me quitte pas/);
+  });
 });
 
 describe("isFaithfulToTranscript", () => {
@@ -114,6 +120,35 @@ describe("finalizeLockedDialogues", () => {
     });
     assert.equal(bible.lines[0]?.sourceText, "Marie, attends-moi !");
     assert.equal(bible.lines[0]?.displayText, "Sarah, attends-moi !");
+  });
+
+  it("does not split a replica that contains internal ellipsis", () => {
+    const bible = finalizeLockedDialogues({
+      transcript: "Je t'en prie... ne me quitte pas.",
+      llmLines: [
+        {
+          id: "D001",
+          sceneNumber: 1,
+          order: 1,
+          speakerId: "CHARACTER_01",
+          speakerLabel: "Marie",
+          sourceText: "Je t'en prie... ne me quitte pas.",
+          displayText: "Je t'en prie... ne me quitte pas.",
+          timeHint: "",
+          emotion: "",
+          intention: "",
+          confidence: "clear",
+          attribution: "certain",
+          performance: emptyPerformance(),
+        },
+      ],
+      characters: [character("Marie")],
+      sceneCount: 1,
+    });
+    assert.equal(bible.lines.length, 1);
+    assert.equal(bible.lines[0]?.speakerId, "CHARACTER_01");
+    assert.match(bible.lines[0]?.sourceText ?? "", /Je t'en prie/);
+    assert.match(bible.lines[0]?.sourceText ?? "", /ne me quitte pas/);
   });
 });
 

@@ -315,7 +315,7 @@ export type SegmentNote = {
 
 export type AnalysisCheckpoint = {
   version: 1;
-  completed: Array<"structure" | "cast" | "segments" | "narrative">;
+  completed: Array<"structure" | "cast" | "segments" | "narrative" | "produce">;
   characters?: CharacterSheet[];
   visualStyle?: VisualStyleAnalysis;
   cinematic?: CinematicLanguage;
@@ -325,12 +325,17 @@ export type AnalysisCheckpoint = {
   segments?: SegmentNote[];
   segmentNotes?: SegmentNote[];
   analyzedSegmentCount: number;
+  analyzedCastBatchCount?: number;
+  analyzedProductionSceneCount?: number;
   incomplete: boolean;
   failedStep?: string;
   failedMessage?: string;
   transcript?: string | null;
   transcriptNote?: string;
   castValidated?: boolean;
+  dialoguesValidated?: boolean;
+  analysis?: VideoAnalysis;
+  production?: ProductionPlan;
   userBrief?: UserBrief;
 };
 
@@ -368,6 +373,7 @@ export type AnalyzeInput = {
   width: number;
   height: number;
   kind: ProjectKind;
+  mode?: ReconstructionMode;
   userNotes?: string;
   checkpoint?: AnalysisCheckpoint;
   chosenStyleId?: string;
@@ -381,6 +387,7 @@ export type GenerateInput = {
   mode: ReconstructionMode;
   userNotes?: string;
   durationSeconds: number;
+  checkpoint?: AnalysisCheckpoint;
 };
 
 export type ReviseAnalysisInput = {

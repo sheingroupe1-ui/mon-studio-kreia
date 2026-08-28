@@ -11,10 +11,9 @@ export const ANALYSIS_JPEG_QUALITY = 0.32;
 export const ANALYSIS_FRAME_CHAR_BUDGET = 22_000;
 
 export function capturePlan(duration: number): { display: number; analysis: number } {
-  if (duration <= 12) return { display: 5, analysis: 4 };
-  if (duration <= 28) return { display: 8, analysis: 5 };
-  if (duration <= 60) return { display: 10, analysis: 8 };
-  return { display: 12, analysis: 10 };
+  if (duration <= 8) return { display: 6, analysis: 6 };
+  if (duration <= 16) return { display: 10, analysis: 10 };
+  return { display: 12, analysis: 12 };
 }
 
 function wait(el: HTMLVideoElement, event: string, timeoutMs = 12000) {
@@ -66,19 +65,14 @@ export async function loadVideoElement(
 
 function frameTimes(duration: number): number[] {
   const { display } = capturePlan(duration);
-  if (duration <= 12) {
-    const raw = [0.12, duration * 0.28, duration * 0.55, duration * 0.82, duration - 0.18];
-    return uniqueTimes(raw, duration, display);
-  }
-  const hook = [0.12, Math.min(1.6, duration * 0.06)];
-  const restCount = Math.max(3, display - hook.length);
-  const start = Math.min(2.4, duration * 0.1);
+  const count = Math.max(4, display);
+  const start = 0.12;
   const end = Math.max(start + 0.3, duration - 0.18);
-  const rest: number[] = [];
-  for (let i = 0; i < restCount; i += 1) {
-    rest.push(start + ((end - start) * i) / Math.max(1, restCount - 1));
+  const raw: number[] = [];
+  for (let i = 0; i < count; i += 1) {
+    raw.push(start + ((end - start) * i) / Math.max(1, count - 1));
   }
-  return uniqueTimes([...hook, ...rest], duration, display);
+  return uniqueTimes(raw, duration, count);
 }
 
 function uniqueTimes(values: number[], duration: number, cap: number): number[] {

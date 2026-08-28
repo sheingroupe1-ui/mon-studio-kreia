@@ -118,19 +118,40 @@ export function applyNameSubstitutionsToBible(
 
 export function utterancesFromTranscript(transcript: string): string[] {
   const cleaned = transcript.replace(/\[\d+(?:\.\d+)?s\]/g, "\n");
-  const parts = cleaned
-    .split(/(?<=[.!?…])\s+|\n+/)
-    .map((s) => s.replace(/^["«»""]+|["«»""]+$/g, "").trim())
+  const protectedEllipsis = cleaned.replace(/\.{3}|…/g, "\uE000");
+  const parts = protectedEllipsis
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.replace(/\uE000/g, "...").replace(/^["«»""]+|["«»""]+$/g, "").trim())
     .filter((s) => s.length > 1);
   const unique: string[] = [];
   const seen = new Set<string>();
-  for (const part of parts) {
+  for (const part of mergeUtteranceFragments(parts)) {
     const key = normalizeSpoken(part);
     if (!key || seen.has(key)) continue;
     seen.add(key);
     unique.push(part);
   }
   return unique;
+}
+
+export function mergeUtteranceFragments(parts: string[]): string[] {
+  const out: string[] = [];
+  for (const part of parts) {
+    const prev = out.at(-1);
+    if (!prev) {
+      out.push(part);
+      continue;
+    }
+    const speakerTag = /^[\p{Lu}][\p{L}'-]{1,20}\s*:/u.test(part);
+    const prevOpen = /(?:\.\.\.|…|,|;|:)\s*$/.test(prev);
+    const continues = /^[\p{Ll}]/u.test(part);
+    if (!speakerTag && (prevOpen || continues)) {
+      out[out.length - 1] = `${prev} ${part}`.replace(/\s+/g, " ").trim();
+      continue;
+    }
+    out.push(part);
+  }
+  return out;
 }
 
 export function isFaithfulToTranscript(line: string, transcript: string): boolean {
@@ -550,6 +571,8 @@ export function finalizeLockedDialogues(args: {
     args.characters,
   ).lines;
 
+  lines = mergeConsecutiveSpeakerTurns(lines);
+
   return {
     language: args.language ?? null,
     source: utterances.length
@@ -560,6 +583,27 @@ export function finalizeLockedDialogues(args: {
     rawTranscript: args.transcript,
     lines: sealDialogueLines(lines, args.characters),
   };
+}
+
+export function mergeConsecutiveSpeakerTurns(lines: DialogueLine[]): DialogueLine[] {
+  const out: DialogueLine[] = [];
+  for (const line of lines) {
+    const prev = out.at(-1);
+    if (
+      prev &&
+      prev.speakerId &&
+      prev.speakerId === line.speakerId &&
+      prev.sceneNumber === line.sceneNumber &&
+      /(?:\.\.\.|…|,|;|:)\s*$/.test(prev.sourceText.trim())
+    ) {
+      const joined = `${prev.sourceText} ${line.sourceText}`.replace(/\s+/g, " ").trim();
+      prev.sourceText = joined;
+      prev.displayText = `${prev.displayText} ${line.displayText}`.replace(/\s+/g, " ").trim();
+      continue;
+    }
+    out.push({ ...line });
+  }
+  return out.map((line, i) => ({ ...line, order: i + 1 }));
 }
 
 export function remapDialogueScenes(

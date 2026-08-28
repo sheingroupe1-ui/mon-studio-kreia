@@ -14,6 +14,7 @@ import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AnalysisProgressView } from "@/components/kreia/analysis-progress.tsx";
 import { CharacterCast } from "@/components/kreia/character-cast.tsx";
+import { DialogueBoard } from "@/components/kreia/dialogue-board.tsx";
 import { AppShell } from "@/components/kreia/shell.tsx";
 import { UserBriefForm } from "@/components/kreia/user-brief-form.tsx";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,7 @@ import type {
   FrameCapture,
   ProjectKind,
   ReconstructionMode,
+  VideoAnalysis,
   VideoMeta,
 } from "@/lib/kreia/types";
 import { cn } from "@/lib/utils";
@@ -53,6 +55,7 @@ function NewProject() {
   const navigate = useNavigate();
   const createDraft = useKreia((s) => s.createDraft);
   const setAnalysis = useKreia((s) => s.setAnalysis);
+  const setProduction = useKreia((s) => s.setProduction);
   const patchCurrent = useKreia((s) => s.patchCurrent);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -76,7 +79,9 @@ function NewProject() {
   const [incomplete, setIncomplete] = useState(false);
   const [checkpoint, setCheckpoint] = useState<AnalysisCheckpoint | null>(null);
   const [reviewingCast, setReviewingCast] = useState(false);
+  const [reviewingDialogues, setReviewingDialogues] = useState(false);
   const [cast, setCast] = useState<CharacterSheet[]>([]);
+  const [reviewAnalysis, setReviewAnalysis] = useState<VideoAnalysis | null>(null);
   const [reviewProjectId, setReviewProjectId] = useState<string | null>(null);
   const runningRef = useRef(false);
 
@@ -239,11 +244,28 @@ function NewProject() {
         return;
       }
 
+      if ("awaitingDialogueReview" in result && result.awaitingDialogueReview) {
+        setCheckpoint(result.checkpoint);
+        setReviewAnalysis(result.analysis);
+        setReviewingDialogues(true);
+        setReviewProjectId(result.projectId);
+        setProgress(progressAt(6));
+        await patchCurrent({
+          status: "analyzing",
+          analysis: result.analysis,
+          analysisCheckpoint: result.checkpoint,
+        });
+        toast.message("Vérifiez les dialogues avant de générer les prompts.");
+        return;
+      }
+
       if (!("analysis" in result) || !result.analysis) {
         throw new Error("L'analyse n'a pas pu être terminée. La réponse reçue est invalide. Veuillez réessayer.");
       }
       await setAnalysis(result.analysis);
-      toast.success("Analyse prête à vérifier.");
+      const production = "production" in result ? result.production : undefined;
+      if (production) await setProduction(production);
+      toast.success(production ? "Prompts prêts à copier." : "Analyse prête à vérifier.");
       await navigate({ to: "/projects/$id", params: { id: result.projectId } });
     } catch (err) {
       logKreiaError("analyze:failed", err);
@@ -528,7 +550,7 @@ function NewProject() {
                 ))}
               </div>
             ) : null}
-            {progress && !reviewingCast ? <AnalysisProgressView progress={progress} /> : null}
+            {progress && !reviewingCast && !reviewingDialogues ? <AnalysisProgressView progress={progress} /> : null}
             {reviewingCast ? (
               <div className="rounded-[24px] bg-[var(--bg-elevated)] p-5 shadow-[var(--shadow-border)]">
                 <CharacterCast
@@ -572,6 +594,34 @@ function NewProject() {
                     };
                     setCheckpoint(next);
                     setReviewingCast(false);
+                    void runAnalysis({ resume: true, checkpoint: next });
+                  }}
+                />
+              </div>
+            ) : null}
+            {reviewingDialogues && reviewAnalysis ? (
+              <div className="rounded-[24px] bg-[var(--bg-elevated)] p-5 shadow-[var(--shadow-border)]">
+                <DialogueBoard
+                  analysis={reviewAnalysis}
+                  validating={busy}
+                  onChange={setReviewAnalysis}
+                  onValidate={() => {
+                    const nextAnalysis = reviewAnalysis;
+                    const next: AnalysisCheckpoint = {
+                      ...(checkpoint ?? {
+                        version: 1,
+                        completed: ["narrative"],
+                        segments: [],
+                        analyzedSegmentCount: 0,
+                        incomplete: false,
+                      }),
+                      version: 1,
+                      analysis: nextAnalysis,
+                      dialoguesValidated: true,
+                      incomplete: false,
+                    };
+                    setCheckpoint(next);
+                    setReviewingDialogues(false);
                     void runAnalysis({ resume: true, checkpoint: next });
                   }}
                 />

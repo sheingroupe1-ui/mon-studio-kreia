@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { AnalysisProgressView } from "@/components/kreia/analysis-progress.tsx";
 import { AnalysisView } from "@/components/kreia/analysis-view.tsx";
 import { ProductionView } from "@/components/kreia/production-view.tsx";
 import { RevisePanel } from "@/components/kreia/revise-panel.tsx";
@@ -9,6 +10,7 @@ import { AppShell } from "@/components/kreia/shell.tsx";
 import { Button } from "@/components/ui/button";
 import { formatDuration, toAnalysisFrames } from "@/lib/kreia/frames";
 import { runKreiaJob } from "@/lib/kreia/job-client";
+import type { AnalysisProgress } from "@/lib/kreia/analysis-stages";
 import { kindById, modeById } from "@/lib/kreia/kinds";
 import {
   failMessage,
@@ -34,6 +36,7 @@ function ProjectPage() {
   const [tab, setTab] = useState<"analysis" | "plan">("analysis");
   const [busy, setBusy] = useState(false);
   const [revise, setRevise] = useState<string | null>(null);
+  const [progress, setProgress] = useState<AnalysisProgress | null>(null);
 
   useEffect(() => {
     void open(id).then((p) => {
@@ -67,16 +70,21 @@ function ProjectPage() {
       return;
     }
     setBusy(true);
+    setProgress({ step: 7, total: 7, label: "Préparation de votre projet" });
     await patchCurrent({ status: "generating" });
     try {
       logKreia("generate:start", { id: current.id, kind: current.kind });
-      const result = await runKreiaJob<{ ok: true; production: ProductionPlan }>("generate", {
-        analysis: current.analysis,
-        kind: current.kind,
-        mode: current.mode,
-        userNotes: current.userNotes,
-        durationSeconds: current.video.durationSeconds,
-      });
+      const result = await runKreiaJob<{ ok: true; production: ProductionPlan }>(
+        "generate",
+        {
+          analysis: current.analysis,
+          kind: current.kind,
+          mode: current.mode,
+          userNotes: current.userNotes,
+          durationSeconds: current.video.durationSeconds,
+        },
+        setProgress,
+      );
       if (!result.ok) {
         const message = failMessage(
           result,
@@ -99,6 +107,7 @@ function ProjectPage() {
       toast.error(message);
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -311,6 +320,11 @@ function ProjectPage() {
         <p className="mb-5 rounded-[var(--radius-md)] bg-[color-mix(in_oklab,var(--color-danger)_14%,transparent)] px-4 py-3 text-sm text-[#f3c7bf]">
           {current.errorMessage}
         </p>
+      ) : null}
+      {progress ? (
+        <div className="mb-5">
+          <AnalysisProgressView progress={progress} />
+        </div>
       ) : null}
       {tab === "analysis" && current.analysis ? (
         <AnalysisView

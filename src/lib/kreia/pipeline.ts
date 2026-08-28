@@ -1,6 +1,6 @@
 import { progressAt, type AnalysisProgress } from "./analysis-stages";
 import { buildAnalysisSystemPrompt, buildAnalysisUserPrompt } from "./engines/analysis-prompt";
-import { identifyCharacters, type CastResult } from "./engines/cast";
+import { identifyCharacters, listCastBatches, type CastResult } from "./engines/cast";
 import {
   collapseAnalysisScenes,
   closestPromptDuration,
@@ -18,6 +18,7 @@ import {
 } from "./engines/dialogues";
 import { fruitHumanoidPromptBlock } from "./engines/fruit-humanoid";
 import { angelPromptBlock } from "./engines/angel";
+import { runProductionSlice } from "./engines/production";
 import {
   chat,
   fail,
@@ -202,6 +203,7 @@ function emptyCheckpoint(): AnalysisCheckpoint {
     completed: [],
     segments: [],
     analyzedSegmentCount: 0,
+    analyzedCastBatchCount: 0,
     incomplete: false,
   };
 }
@@ -215,6 +217,7 @@ export type PipelinePhase =
   | "compact"
   | "segment"
   | "narrative"
+  | "produce"
   | "done";
 
 export type PipelineSlice = {
@@ -222,29 +225,32 @@ export type PipelineSlice = {
   checkpoint: AnalysisCheckpoint;
   progress: AnalysisProgress;
   analysis?: VideoAnalysis;
+  production?: import("./types").ProductionPlan;
   error?: string;
   done: boolean;
   awaitingCastReview?: boolean;
+  awaitingDialogueReview?: boolean;
 };
 
 function markCompleted(checkpoint: AnalysisCheckpoint, step: AnalysisCheckpoint["completed"][number]) {
   if (!checkpoint.completed.includes(step)) checkpoint.completed = [...checkpoint.completed, step];
 }
 
-async function runCastStep(data: AnalyzeInput, frames: FrameCapture[], checkpoint: AnalysisCheckpoint) {
-  const session = data.userNotes ? "notes" : "no-notes";
+async function runOneCastBatch(data: AnalyzeInput, frames: FrameCapture[], checkpoint: AnalysisCheckpoint) {
+  const batches = listCastBatches(frames);
+  const total = Math.max(1, batches.length);
+  const doneBatches = checkpoint.analyzedCastBatchCount ?? 0;
   console.info("[PIPELINE] Current checkpoint:", {
     completed: checkpoint.completed,
     segments: checkpoint.segments?.length ?? 0,
     characters: checkpoint.characters?.length ?? 0,
+    castBatch: doneBatches + 1,
+    castBatches: total,
   });
   console.info("[PIPELINE] Current step: 3 identification");
-  console.info("[CHARACTERS] STEP START");
+  console.info("[CHARACTERS] STEP START", { batch: doneBatches + 1, total });
   console.info("[CHARACTERS] Input available:", Boolean(frames.length));
   console.info("[CHARACTERS] Frames count:", frames.length);
-  console.info("[CHARACTERS] Structure available:", Boolean(checkpoint.segments?.length));
-  console.info("[CHARACTERS] Preparing AI request", { session, kind: data.kind });
-  console.info("[CHARACTERS] AI request START");
   let cast: CastResult;
   try {
     cast = await identifyCharacters({
@@ -254,28 +260,11 @@ async function runCastStep(data: AnalyzeInput, frames: FrameCapture[], checkpoin
       width: data.width,
       height: data.height,
       userNotes: [data.userNotes, formatUserBrief(data.userBrief)].filter(Boolean).join("\n"),
+      batchIndex: doneBatches,
+      knownCharacters: checkpoint.characters ?? [],
     });
     console.info("[CHARACTERS] AI response RECEIVED");
-    console.info("[CHARACTERS] Response type:", typeof cast);
     console.info("[CHARACTERS] Characters detected:", (cast.characters ?? []).map((c) => c.id));
-    console.info("[CHARACTERS] Parsing SUCCESS");
-    console.info("[CHARACTERS] Validation START");
-    if (!Array.isArray(cast.characters)) {
-      console.error("[CHARACTERS ERROR]", {
-        step: 3,
-        subStep: "validation",
-        errorName: "InvalidCast",
-        errorMessage: "characters is not an array",
-        checkpointBefore: checkpoint.completed,
-      });
-      cast = {
-        characters: [],
-        observedSummary: "",
-        limitations: ["Identification partielle — l'analyse continue."],
-        language: null,
-      };
-    }
-    console.info("[CHARACTERS] Validation SUCCESS");
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
     console.error("[CHARACTERS ERROR]", {
@@ -285,33 +274,48 @@ async function runCastStep(data: AnalyzeInput, frames: FrameCapture[], checkpoin
       errorMessage: error.message,
       stack: error.stack,
       frames: frames.length,
+      batch: doneBatches + 1,
       checkpointBefore: checkpoint.completed,
     });
     cast = {
-      characters: [],
-      observedSummary: "",
+      characters: checkpoint.characters ?? [],
+      observedSummary: checkpoint.observedSummary ?? "",
       limitations: [`Identification partielle : ${error.message}. L'analyse continue.`],
-      language: null,
+      language: checkpoint.language ?? null,
+      done: doneBatches + 1 >= total,
+      batchIndex: doneBatches,
+      batchCount: total,
     };
   }
-  console.info("[CHARACTERS] Persisting checkpoint");
-  markCompleted(checkpoint, "cast");
-  checkpoint.characters = cast.characters;
-  checkpoint.cinematic = cast.cinematic;
-  checkpoint.observedSummary = cast.observedSummary;
-  const countWarning = briefCountWarning(data.userBrief?.expectedCount ?? "", (cast.characters ?? []).length);
-  checkpoint.limitations = [
-    ...(cast.limitations ?? []),
-    ...duplicateWarnings(cast.characters ?? []),
-    ...(countWarning ? [countWarning] : []),
-  ];
-  checkpoint.language = cast.language;
-  console.info("[CHARACTERS] Checkpoint persisted", {
-    characters: checkpoint.characters?.length ?? 0,
-    completed: checkpoint.completed,
-  });
-  console.info("[CHARACTERS] STEP COMPLETE");
-  console.info("[PIPELINE] Moving to step 4");
+  checkpoint.characters = Array.isArray(cast.characters) ? cast.characters : checkpoint.characters ?? [];
+  if (cast.cinematic && !checkpoint.cinematic) checkpoint.cinematic = cast.cinematic;
+  if (cast.observedSummary && !checkpoint.observedSummary) checkpoint.observedSummary = cast.observedSummary;
+  if (cast.language && !checkpoint.language) checkpoint.language = cast.language;
+  checkpoint.limitations = [...new Set([...(checkpoint.limitations ?? []), ...(cast.limitations ?? [])])];
+  checkpoint.analyzedCastBatchCount = doneBatches + 1;
+  if (checkpoint.analyzedCastBatchCount >= total || cast.done) {
+    const countWarning = briefCountWarning(
+      data.userBrief?.expectedCount ?? "",
+      (checkpoint.characters ?? []).length,
+    );
+    checkpoint.limitations = [
+      ...(checkpoint.limitations ?? []),
+      ...duplicateWarnings(checkpoint.characters ?? []),
+      ...(countWarning ? [countWarning] : []),
+    ];
+    markCompleted(checkpoint, "cast");
+    console.info("[CHARACTERS] STEP COMPLETE", {
+      characters: checkpoint.characters?.length ?? 0,
+      batches: checkpoint.analyzedCastBatchCount,
+    });
+    console.info("[PIPELINE] Moving to step 4");
+  } else {
+    console.info("[CHARACTERS] Batch persisted", {
+      batch: checkpoint.analyzedCastBatchCount,
+      total,
+      characters: checkpoint.characters?.length ?? 0,
+    });
+  }
 }
 
 async function runCompactStep(
@@ -566,9 +570,11 @@ export async function runPipelineSlice(args: {
     step: number,
     extra?: Partial<AnalysisProgress> & {
       analysis?: VideoAnalysis;
+      production?: import("./types").ProductionPlan;
       error?: string;
       done?: boolean;
       awaitingCastReview?: boolean;
+      awaitingDialogueReview?: boolean;
     },
   ): PipelineSlice => ({
     nextPhase,
@@ -577,11 +583,17 @@ export async function runPipelineSlice(args: {
       compact: extra?.compact,
       segmentsDone: extra?.segmentsDone,
       segmentsTotal: extra?.segmentsTotal,
+      castBatchesDone: extra?.castBatchesDone,
+      castBatchesTotal: extra?.castBatchesTotal,
+      productionScenesDone: extra?.productionScenesDone,
+      productionScenesTotal: extra?.productionScenesTotal,
     }),
     analysis: extra?.analysis,
+    production: extra?.production,
     error: extra?.error,
     done: Boolean(extra?.done),
     awaitingCastReview: extra?.awaitingCastReview,
+    awaitingDialogueReview: extra?.awaitingDialogueReview,
   });
 
   switch (args.phase) {
@@ -643,9 +655,20 @@ export async function runPipelineSlice(args: {
     }
     case "cast": {
       if (!checkpoint.completed.includes("cast")) {
-        await runCastStep(data, frames, checkpoint);
+        await runOneCastBatch(data, frames, checkpoint);
       }
-      return finish("style", 4);
+      const total = Math.max(1, listCastBatches(frames).length);
+      const doneCount = checkpoint.analyzedCastBatchCount ?? 0;
+      if (!checkpoint.completed.includes("cast")) {
+        return finish("cast", 3, {
+          castBatchesDone: doneCount,
+          castBatchesTotal: total,
+        });
+      }
+      return finish("style", 4, {
+        castBatchesDone: doneCount,
+        castBatchesTotal: total,
+      });
     }
     case "style": {
       checkpoint.visualStyle = styleFromUserChoice(data.chosenStyleId, data.chosenStyleText);
@@ -666,9 +689,19 @@ export async function runPipelineSlice(args: {
       if (!checkpoint.visualStyle?.lockedStylePhrase) {
         checkpoint.visualStyle = styleFromUserChoice(data.chosenStyleId, data.chosenStyleText);
       }
-      const analysis = await runCompactStep(data, frames, checkpoint);
+      if (!checkpoint.analysis) {
+        checkpoint.analysis = await runCompactStep(data, frames, checkpoint);
+      }
       console.info("[PIPELINE] compact COMPLETE");
-      return finish("done", 7, { compact: true, analysis, done: true });
+      if (!checkpoint.dialoguesValidated) {
+        return finish("produce", 6, {
+          compact: true,
+          analysis: checkpoint.analysis,
+          awaitingDialogueReview: true,
+          done: true,
+        });
+      }
+      return finish("produce", 7, { compact: true, analysis: checkpoint.analysis });
     }
     case "segment": {
       await runOneSegment(data, frames, checkpoint);
@@ -680,8 +713,49 @@ export async function runPipelineSlice(args: {
       return finish("segment", 5, { segmentsDone: doneCount, segmentsTotal: total });
     }
     case "narrative": {
-      const analysis = await runNarrativeStep(data, frames, checkpoint);
-      return finish("done", 7, { analysis, done: true });
+      if (!checkpoint.analysis) {
+        checkpoint.analysis = await runNarrativeStep(data, frames, checkpoint);
+      }
+      if (!checkpoint.dialoguesValidated) {
+        return finish("produce", 6, {
+          analysis: checkpoint.analysis,
+          awaitingDialogueReview: true,
+          done: true,
+        });
+      }
+      return finish("produce", 7, { analysis: checkpoint.analysis });
+    }
+    case "produce": {
+      const analysis = checkpoint.analysis;
+      if (!analysis) {
+        return finish("done", 7, { done: true, error: "Analyse absente pour générer les prompts." });
+      }
+      const slice = await runProductionSlice({
+        analysis,
+        kind: data.kind,
+        mode: data.mode ?? "reconstruction",
+        userNotes: data.userNotes,
+        durationSeconds: data.durationSeconds,
+        checkpoint,
+      });
+      checkpoint.production = slice.checkpoint.production;
+      checkpoint.analyzedProductionSceneCount = slice.checkpoint.analyzedProductionSceneCount;
+      checkpoint.completed = slice.checkpoint.completed;
+      if (slice.error) {
+        return finish("done", 7, { done: true, error: slice.error, analysis });
+      }
+      if (slice.done && slice.production) {
+        return finish("done", 7, {
+          done: true,
+          analysis,
+          production: slice.production,
+        });
+      }
+      return finish("produce", 7, {
+        analysis,
+        productionScenesDone: slice.progress.productionScenesDone,
+        productionScenesTotal: slice.progress.productionScenesTotal,
+      });
     }
     default:
       return finish("done", 7, { done: true, error: NETWORK_MESSAGE });

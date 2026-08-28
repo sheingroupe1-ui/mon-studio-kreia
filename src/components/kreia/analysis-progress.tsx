@@ -29,6 +29,14 @@ export function AnalysisProgressView({
         <p className="mt-1 text-xs text-[var(--fg-subtle)]">
           Style choisi appliqué. Scènes et narration en cours.
         </p>
+      ) : typeof progress.productionScenesDone === "number" && typeof progress.productionScenesTotal === "number" ? (
+        <p className="mt-1 text-xs text-[var(--fg-subtle)]">
+          Génération des prompts — scène {progress.productionScenesDone} / {progress.productionScenesTotal}
+        </p>
+      ) : typeof progress.castBatchesDone === "number" && typeof progress.castBatchesTotal === "number" ? (
+        <p className="mt-1 text-xs text-[var(--fg-subtle)]">
+          Identification des personnages — lot {progress.castBatchesDone} / {progress.castBatchesTotal}
+        </p>
       ) : current === 3 ? (
         <p className="mt-1 text-xs text-[var(--fg-subtle)]">
           Identification : 15 à 40 s, parfois jusqu'à 1 minute.
