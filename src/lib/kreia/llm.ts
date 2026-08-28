@@ -1,5 +1,6 @@
 export const MODEL = "grok-4.5";
-export const FETCH_TIMEOUT_MS = 90_000;
+export const FETCH_TIMEOUT_MS = 45_000;
+export const VISION_TIMEOUT_MS = 50_000;
 
 export const INVALID_AI_MESSAGE =
   "L'analyse n'a pas pu être terminée. La réponse reçue est invalide. Veuillez réessayer.";
@@ -87,7 +88,7 @@ export async function chat(args: {
         },
         body: JSON.stringify(body),
       },
-      hasImages ? Math.max(timeoutMs, 120_000) : timeoutMs,
+      hasImages ? Math.max(timeoutMs, VISION_TIMEOUT_MS) : timeoutMs,
     );
     return res;
   };
@@ -100,7 +101,7 @@ export async function chat(args: {
     console.error("[kreia:chat] fetch failed", err);
     return fail(
       aborted
-        ? `Timeout IA après ${hasImages ? Math.max(timeoutMs, 120_000) : timeoutMs} ms (vision=${hasImages}).`
+        ? `Timeout IA après ${hasImages ? Math.max(timeoutMs, VISION_TIMEOUT_MS) : timeoutMs} ms (vision=${hasImages}).`
         : `Réseau IA: ${err instanceof Error ? err.message : NETWORK_MESSAGE}`,
     );
   }
