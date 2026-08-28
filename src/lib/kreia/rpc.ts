@@ -50,22 +50,12 @@ export function isTransportError(err: unknown): boolean {
 export function userFacingError(err: unknown, fallback: string): string {
   const msg = errorText(err).trim();
   if (!msg) return fallback;
-
   const lower = msg.toLowerCase();
-  if (isTransportError(err)) return TRANSPORT_MESSAGE;
+  if (isTransportError(err)) {
+    return `${TRANSPORT_MESSAGE} — détail: ${msg.slice(0, 280)}`;
+  }
   if (lower.includes("introuvable") || lower.includes("n'est plus disponible")) {
-    return "La session d'analyse n'est plus disponible. Relancez l'analyse.";
-  }
-  if (lower.includes("aborted") || lower.includes("timeout") || lower.includes("timed out")) {
-    return "L'analyse a dépassé le délai imparti. Réessayez avec une vidéo plus courte.";
-  }
-  if (
-    lower.includes("invariant failed") ||
-    lower.includes("content-type header") ||
-    lower.includes("expected result to be resolved") ||
-    lower === "forbidden"
-  ) {
-    return "L'analyse n'a pas pu être terminée. La réponse reçue est invalide. Veuillez réessayer.";
+    return `La session d'analyse n'est plus disponible. Relancez l'analyse. — ${msg.slice(0, 180)}`;
   }
   return msg;
 }

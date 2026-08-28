@@ -1,35 +1,46 @@
 import { LoaderCircle } from "lucide-react";
 import { ANALYSIS_STEPS, type AnalysisProgress } from "@/lib/kreia/analysis-stages";
+import { IDEA_STEPS } from "@/lib/kreia/idea-stages";
 import { cn } from "@/lib/utils";
 
 export function AnalysisProgressView({
   progress,
+  mode = "video",
 }: {
   progress: AnalysisProgress | null;
+  mode?: "video" | "idea";
 }) {
   if (!progress) return null;
   const current = progress.step;
+  const steps = mode === "idea" ? IDEA_STEPS : ANALYSIS_STEPS;
   return (
     <div className="rounded-[var(--radius-lg)] bg-[var(--bg-elevated)] p-4 shadow-[var(--shadow-border)]">
       <p className="flex items-center gap-2 text-sm text-[var(--fg)]">
         <LoaderCircle className="size-4 animate-spin text-[var(--accent)]" />
         {progress.step}/{progress.total} — {progress.label}
       </p>
-      {typeof progress.segmentsDone === "number" && typeof progress.segmentsTotal === "number" ? (
+      {mode === "idea" ? (
+        <p className="mt-1 text-xs text-[var(--fg-subtle)]">Création à partir de votre idée — sans vidéo.</p>
+      ) : typeof progress.segmentsDone === "number" && typeof progress.segmentsTotal === "number" ? (
         <p className="mt-1 text-xs text-[var(--fg-subtle)]">
           Analyse des segments : {progress.segmentsDone} / {progress.segmentsTotal}
         </p>
       ) : progress.compact ? (
         <p className="mt-1 text-xs text-[var(--fg-subtle)]">
-          Vidéo courte : personnages, style et scènes sont lus ensemble.
+          Style choisi appliqué. Scènes et narration en cours.
+        </p>
+      ) : current === 3 ? (
+        <p className="mt-1 text-xs text-[var(--fg-subtle)]">
+          Identification : 15 à 40 s, parfois jusqu'à 1 minute.
         </p>
       ) : (
-        <p className="mt-1 text-xs text-[var(--fg-subtle)]">
-          Étape en cours.
-        </p>
+        <p className="mt-1 text-xs text-[var(--fg-subtle)]">Étape en cours.</p>
       )}
+      {progress.debug && mode === "video" ? (
+        <p className="mt-2 break-all font-mono text-[10px] text-[var(--fg-subtle)]">{progress.debug}</p>
+      ) : null}
       <ol className="mt-4 space-y-1.5">
-        {ANALYSIS_STEPS.map((item, i) => {
+        {steps.map((item, i) => {
           const n = i + 1;
           const state = n < current ? "done" : n === current ? "now" : "todo";
           return (

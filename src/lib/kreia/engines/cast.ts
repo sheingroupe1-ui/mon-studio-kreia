@@ -11,7 +11,7 @@ import type {
   VisualStyleAnalysis,
 } from "../types";
 
-const CAST_TOKENS = 3200;
+const CAST_TOKENS = 4200;
 
 export type CastResult = {
   characters: CharacterSheet[];
@@ -181,16 +181,12 @@ function pickOverview(frames: FrameCapture[]): FrameCapture[] {
   const valid = frames.filter(
     (f) => typeof f.dataUrl === "string" && f.dataUrl.startsWith("data:image/") && f.dataUrl.length > 32,
   );
-  if (valid.length <= 2) return valid;
-  const times = [
-    valid[0]!.t,
-    valid[Math.floor(valid.length / 3)]!.t,
-    valid[Math.floor((valid.length * 2) / 3)]!.t,
-    valid.at(-1)!.t,
-  ];
+  if (valid.length <= 4) return valid;
+  const marks = valid.length >= 8 ? [0, 0.2, 0.4, 0.6, 0.8, 1] : [0, 0.33, 0.66, 1];
   const picked: FrameCapture[] = [];
-  for (const t of times) {
-    const nearest = valid.reduce((a, b) => (Math.abs(b.t - t) < Math.abs(a.t - t) ? b : a));
+  for (const m of marks) {
+    const target = valid[0]!.t + m * (valid.at(-1)!.t - valid[0]!.t);
+    const nearest = valid.reduce((a, b) => (Math.abs(b.t - target) < Math.abs(a.t - target) ? b : a));
     if (!picked.some((p) => p.t === nearest.t)) picked.push(nearest);
   }
   return picked;
@@ -239,10 +235,10 @@ export async function identifyCharacters(args: {
           ? "ANGEL_CHARACTER_01… pour les anges, CHARACTER_01… pour les humains"
           : "CHARACTER_01…";
 
-    // One request with at most two frames — sequential 4× vision calls were killing the job session.
-    const batches: FrameCapture[][] = [overview.slice(0, 2)];
-    if (overview.length > 2) {
-      batches.push([overview[overview.length - 1]!]);
+    // Spread frames across the video so secondary / brief / background characters are seen.
+    const batches: FrameCapture[][] = [];
+    for (let i = 0; i < overview.length; i += 3) {
+      batches.push(overview.slice(i, i + 3));
     }
     let merged: CharacterSheet[] = [];
     let visualStyle: VisualStyleAnalysis | undefined;
@@ -260,6 +256,8 @@ export async function identifyCharacters(args: {
         continue;
       }
       logPipe(5, "Preparing analysis request", { batch: batchIndex + 1, images: img.length });
+      console.info("[CHARACTERS] Preparing AI request", { batch: batchIndex + 1, images: img.length });
+      console.info("[CHARACTERS] AI request START");
       let cast: Awaited<ReturnType<typeof chat>> | undefined;
       try {
         logPipe(6, "Request sent", { batch: batchIndex + 1 });
@@ -267,11 +265,16 @@ export async function identifyCharacters(args: {
           messages: [
             {
               role: "system",
-              content: `Tu identifies les PERSONNAGES visibles — humains OU non humains — et le style visuel. Pas de découpage de scènes. ${fruit}${angel}
+              content: `Tu identifies TOUS les PERSONNAGES visibles — humains OU non humains. N'analyse PAS le style visuel. Pas de découpage de scènes. ${fruit}${angel}
 characterType ∈ human | fruit_humanoid | angel | animated_character | animal_humanoid | fantasy_character | unknown_character
-Un fruit, un ange, un animal humanoïde = un PERSONNAGE. 0 personnage = "characters": []. unknown_character est VALIDE.
+RÈGLES D'IDENTIFICATION
+- Liste CHAQUE personnage distinct : premier plan, arrière-plan, plans larges, plans serrés, silencieux, apparition brève (même 2–3 s), non-humain.
+- Le même individu sur plusieurs images = UN seul personnage. Ne pas dupliquer.
+- Ne t'arrête pas au protagoniste ni à celui qui parle.
+- Si tu n'es pas sûr : inclus-le quand même, nameConfidence = "inferred", notes = "incertain".
+- 0 personnage vraiment visible = "characters": []. unknown_character est VALIDE. Jamais d'échec.
 IDs : ${idScheme}. name = null si inconnu.
-JSON objet : { "observedSummary":"", "limitations":[], "language": null, "characters": [], "visualStyle": { "renderType":"", "artisticStyle":"", "lockedStylePhrase":"", "confidence":"observed" }, "cinematic": { "dominantShots":[], "cameraAngles":[], "movements":[], "lightingStyle":"", "rhythm":"" } }`,
+JSON objet : { "observedSummary":"", "limitations":[], "language": null, "characters": [{ "id":"", "designation":"", "name":null, "nameConfidence":"inferred", "characterType":"", "ageApparent":"", "appearance":"", "hair":"", "eyes":"", "complexion":"", "morphology":"", "clothing":"", "accessories":"", "distinctiveFeatures":"", "species":"", "bodyStructure":"", "wings":"", "halo":"", "role":"", "prominence":"principal|secondary|punctual", "firstSeen":"", "lastSeen":"", "notes":"" }] }`,
             },
             {
               role: "user",
@@ -279,9 +282,10 @@ JSON objet : { "observedSummary":"", "limitations":[], "language": null, "charac
                 {
                   type: "text",
                   text: `Durée ${Number(args.durationSeconds || 0).toFixed(1)} s, ${args.width || 0}×${args.height || 0}, type ${args.kind}.
-Photogramme ${batch.map((f) => Number(f.t || 0).toFixed(1) + "s").join(", ")}.
-Déjà vus : ${merged.length ? merged.map((c) => `${c.id} ${c.designation}`).join(" · ") : "aucun"}.
-${args.userNotes ?? ""}`,
+Photogrammes ${batch.map((f) => Number(f.t || 0).toFixed(1) + "s").join(", ")} — parcours toute l'image, pas seulement le centre.
+Déjà identifiés : ${merged.length ? merged.map((c) => `${c.id} ${c.designation} (${c.appearance || c.clothing || "—"})`).join(" · ") : "aucun — cherche-les tous"}.
+${args.userNotes ?? ""}
+Si un visage déjà listé réapparaît, réutilise le même ID. Sinon crée un nouveau personnage.`,
                 },
                 ...img,
               ],
@@ -297,6 +301,12 @@ ${args.userNotes ?? ""}`,
       }
 
       logPipe(7, "Response received", { batch: batchIndex + 1, hasValue: Boolean(cast) });
+      console.info("[CHARACTERS] AI response RECEIVED", {
+        batch: batchIndex + 1,
+        ok: Boolean(cast && "ok" in cast && cast.ok),
+        length: cast && "ok" in cast && cast.ok ? cast.text.length : 0,
+        error: cast && "error" in cast ? cast.error : undefined,
+      });
       const keys = cast && typeof cast === "object" ? Object.keys(cast) : [];
       logPipe(8, "Response status", { ok: Boolean(cast && "ok" in cast && cast.ok), keys });
       const contentExists = Boolean(cast && "ok" in cast && cast.ok && typeof cast.text === "string" && cast.text.trim());

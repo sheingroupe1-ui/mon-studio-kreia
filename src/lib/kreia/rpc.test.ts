@@ -60,34 +60,32 @@ describe("readServerResult", () => {
 
 describe("userFacingError", () => {
   it("maps the historic .ok crash to a transport message", () => {
-    assert.equal(
-      userFacingError(
-        new Error("Cannot read properties of undefined (reading 'ok')"),
-        "fallback",
-      ),
-      TRANSPORT_MESSAGE,
+    const out = userFacingError(
+      new Error("Cannot read properties of undefined (reading 'ok')"),
+      "fallback",
     );
+    assert.match(out, /n'a pas pu aboutir/);
+    assert.match(out, /reading 'ok'/);
   });
 
   it("maps Cloudflare HTML to a transport message", () => {
-    assert.equal(
-      userFacingError(
-        new Error(
-          '<!DOCTYPE html> <!--[if lt IE 7]> <html class="no-js ie6 oldie" lang="en-US">',
-        ),
-        "x",
+    const out = userFacingError(
+      new Error(
+        '<!DOCTYPE html> <!--[if lt IE 7]> <html class="no-js ie6 oldie" lang="en-US">',
       ),
-      TRANSPORT_MESSAGE,
+      "x",
     );
+    assert.match(out, /n'a pas pu aboutir/);
+    assert.match(out, /DOCTYPE/i);
   });
 
-  it("maps TanStack transport invariants to an invalid-response message", () => {
+  it("keeps TanStack invariant text instead of hiding it", () => {
     assert.match(
       userFacingError(
         new Error("Invariant failed: expected content-type header to be set"),
         "x",
       ),
-      /réponse reçue est invalide/,
+      /Invariant failed/,
     );
   });
 

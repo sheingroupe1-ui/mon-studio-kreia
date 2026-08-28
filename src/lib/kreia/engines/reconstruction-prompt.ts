@@ -11,9 +11,11 @@ function modeInstructions(mode: ReconstructionMode): string {
     return `
 MODE : RECONSTRUCTION
 Reproduis FIDÈLEMENT l'histoire, le thème, les événements, l'ordre narratif et les DIALOGUES SOURCE.
-Les dialogues verrouillés sont la référence. Recopie-les MOT À MOT dans scene.dialogue et dans videoPrompt.
-Interdit : paraphraser, résumer, inventer, adoucir, embellir, changer l'ordre des locuteurs.
-Seul un prénom modifié par l'utilisateur peut être substitué (Marie → Sarah), sans réécrire le reste de la phrase.
+Les dialogues verrouillés sont la référence du SENS et de l'ordre.
+Les répliques PRONONCÉES dans scene.dialogue et videoPrompt doivent être en FRANÇAIS UNIQUEMENT.
+Si la source est dans une autre langue, traduis fidèlement le sens — aucune phrase parlée en anglais, espagnol, portugais, etc.
+Interdit : inventer, adoucir, embellir, changer l'ordre des locuteurs.
+Seul un prénom modifié par l'utilisateur peut être substitué (Marie → Sarah).
 Si aucun dialogue n'a été observé, dialogue = null partout. Ne pas en inventer.
 `.trim();
   }
@@ -22,7 +24,8 @@ Si aucun dialogue n'a été observé, dialogue = null partout. Ne pas en invente
 MODE : ADAPTATION
 Conserve la mécanique narrative (hook, conflit, rythme, structure) et le style visuel verrouillé.
 Tu peux adapter le lieu ou la situation. PAS les paroles.
-Les DIALOGUES SOURCE restent verrouillés mot à mot. Seul le prénom peut changer.
+Les DIALOGUES SOURCE gardent leur sens et leur ordre. Les paroles prononcées dans les prompts sont en FRANÇAIS UNIQUEMENT (traduction fidèle si la source est étrangère).
+Seul le prénom peut changer.
 Si l'analyse n'a pas de dialogue, dialogue = null partout — n'en invente pas.
 `.trim();
   }
@@ -30,6 +33,7 @@ Si l'analyse n'a pas de dialogue, dialogue = null partout — n'en invente pas.
 MODE : INSPIRATION ORIGINALE
 Conserve : type de hook, rythme, structure, style audiovisuel.
 Crée une histoire NOUVELLE, clairement distincte.
+Les dialogues inventés pour cette histoire sont en FRANÇAIS UNIQUEMENT.
 N'utilise PAS les dialogues source comme répliques du nouveau récit, et ne les présente pas comme paroles de la source.
 `.trim();
 }
@@ -44,6 +48,8 @@ Tu n'écris pas un résumé. Tu prends des décisions créatives cohérentes à 
 RÈGLES
 - lockedStylePhrase et le rendu (textures, matériaux, réalisme) sont TISSÉS dans chaque imagePrompt et videoPrompt — jamais un bloc « STYLE VISUEL » séparé à copier.
 - Character ID stables. Chaque prompt décrit le personnage COMPLET (type, visage, corps, vêtements, ailes/espèce si observés) + le style, pas seulement l'ID.
+- Les fiches personnages validées par l'utilisateur sont VERROUILLÉES : ne jamais changer visage, coiffure, teint, morphologie, âge apparent, yeux, proportions.
+- LANGUE PARLÉE : toutes les répliques entre guillemets dans videoPrompt et scene.dialogue sont en français, même si la source est étrangère. Le sens reste fidèle.
 - Ne jamais transformer un fruit en autre fruit, un ange en humain, ni ajouter/retirer des ailes absentes de la fiche.
 - Durée de chaque prompt vidéo : 6, 8 ou 10 secondes — choisir la plus juste pour l'action, jamais gonfler artificiellement.
 - La SOMME des durées de scènes doit rester proche de la durée source. Interdit de transformer 10 s de source en 24 s de prompts.
@@ -52,7 +58,7 @@ RÈGLES
 - Ne pas changer de style (pas de photoréaliste si la source est 3D cartoon, etc.).
 - Prompts professionnels, en anglais pour les champs imagePrompt et videoPrompt (meilleure compatibilité des moteurs), reste du plan en français.
 - videoPrompt : un bloc continu, précis, prêt à coller (sujet, action, caméra, lumière, style, audio, contraintes).
-- Si un dialogue est verrouillé pour la scène, le videoPrompt DOIT contenir la réplique EXACTE (mots source) ET son interprétation observée (émotion, expression, geste, regard, ton, larmes). Interdit de paraphraser ou d'adoucir.
+- Si un dialogue est verrouillé pour la scène, le videoPrompt DOIT contenir la réplique en FRANÇAIS (sens fidèle) ET son interprétation observée (émotion, expression, geste, regard, ton, larmes). Interdit d'inventer ou d'adoucir. Aucune réplique parlée dans une autre langue.
 - Si des larmes / un cri / un tremblement / un geste important sont dans l'analyse, les reproduire. Ne pas inventer de gestes absents.
 - imagePrompt : portrait de référence, cadrage plan américain ou portrait, fond simple cohérent avec l'univers, éclairage adapté.
 ${fruitHumanoidPromptBlock(kind === "fruit-humanoid")}

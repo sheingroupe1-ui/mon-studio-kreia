@@ -1,8 +1,9 @@
 import {
+  advanceJob,
   appendAudio,
   appendFrame,
   createJob,
-  getJob,
+  identifyOnly,
   isJobType,
   JOB_MISSING,
   startJob,
@@ -33,7 +34,7 @@ export async function handleKreiaJobsRequest(request: Request): Promise<Response
   if (method === "GET") {
     const id = new URL(request.url).searchParams.get("id")?.trim() ?? "";
     if (!id) return json({ ok: true, service: "kreia-jobs" });
-    const job = getJob(id);
+    const job = await advanceJob(id);
     if (!job) return json({ ok: false, error: JOB_MISSING }, 404);
     return json(job);
   }
@@ -54,20 +55,20 @@ export async function handleKreiaJobsRequest(request: Request): Promise<Response
   if (op === "poll" || op === "status") {
     const id = typeof rec.id === "string" ? rec.id : "";
     if (!id) return json({ ok: false, error: JOB_MISSING }, 400);
-    const job = getJob(id);
+    const job = await advanceJob(id);
     if (!job) return json({ ok: false, error: JOB_MISSING }, 404);
     return json(job);
   }
 
   if (op === "create") {
     if (!isJobType(rec.type)) return json({ ok: false, error: "Type de tâche inconnu." }, 400);
-    return json(createJob(rec.type));
+    return json(await createJob(rec.type));
   }
 
   if (op === "frame") {
     const id = typeof rec.id === "string" ? rec.id : "";
     const jpeg = typeof rec.jpeg === "string" ? rec.jpeg : "";
-    const added = appendFrame(id, Number(rec.t), jpeg);
+    const added = await appendFrame(id, Number(rec.t), jpeg);
     if (!added.ok) return json({ ok: false, error: added.error }, added.status ?? 400);
     return json(added.snapshot);
   }
@@ -75,31 +76,24 @@ export async function handleKreiaJobsRequest(request: Request): Promise<Response
   if (op === "audio") {
     const id = typeof rec.id === "string" ? rec.id : "";
     const wav = typeof rec.wav === "string" ? rec.wav : "";
-    const added = appendAudio(id, Number(rec.t), wav);
+    const added = await appendAudio(id, Number(rec.t), wav);
     if (!added.ok) return json({ ok: false, error: added.error }, added.status ?? 400);
     return json(added.snapshot);
   }
 
+  if (op === "identify") {
+    const id = typeof rec.id === "string" ? rec.id : "";
+    if (!id) return json({ ok: false, error: JOB_MISSING }, 400);
+    return json(await identifyOnly(id));
+  }
+
   if (op === "start") {
     const id = typeof rec.id === "string" ? rec.id : "";
-    const started = startPendingJob(id, rec.payload);
+    const started = await startPendingJob(id, rec.payload);
     if ("error" in started) {
       return json({ ok: false, error: started.error }, started.status ?? 400);
     }
     console.info("[kreia:jobs] started", { id: started.snapshot.id, type: started.snapshot.type });
-    if (process.env.VERCEL) {
-      try {
-        return json(await started.done);
-      } catch (err) {
-        console.error("[kreia:jobs] sync wait failed", err);
-        return json({
-          id: started.snapshot.id,
-          type: started.snapshot.type,
-          status: "error",
-          error: "L'analyse n'a pas pu aboutir. Réessayez.",
-        });
-      }
-    }
     return json(started.snapshot);
   }
 
@@ -108,21 +102,8 @@ export async function handleKreiaJobsRequest(request: Request): Promise<Response
     if (rec.payload == null || typeof rec.payload !== "object") {
       return json({ ok: false, error: "Charge utile manquante." }, 400);
     }
-    const { snapshot, done } = startJob(rec.type, rec.payload);
+    const { snapshot } = await startJob(rec.type, rec.payload);
     console.info("[kreia:jobs] run", { id: snapshot.id, type: snapshot.type });
-    if (process.env.VERCEL) {
-      try {
-        return json(await done);
-      } catch (err) {
-        console.error("[kreia:jobs] sync wait failed", err);
-        return json({
-          id: snapshot.id,
-          type: snapshot.type,
-          status: "error",
-          error: "L'analyse n'a pas pu aboutir. Réessayez.",
-        });
-      }
-    }
     return json(snapshot);
   }
 

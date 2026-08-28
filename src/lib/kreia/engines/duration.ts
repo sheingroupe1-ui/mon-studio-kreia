@@ -230,3 +230,16 @@ export function proposeSegments(duration: number, frameTimes: number[]): TimeSeg
   }
   return segs;
 }
+
+export function ideaSceneCount(durationSeconds: number): number {
+  const d = Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 60;
+  return Math.min(18, Math.max(3, Math.round(d / 10)));
+}
+
+export function defaultIdeaDuration(idea: string): number {
+  const words = idea.trim().split(/\s+/).filter(Boolean).length;
+  if (words < 20) return 30;
+  if (words < 80) return 60;
+  if (words < 160) return 120;
+  return 180;
+}

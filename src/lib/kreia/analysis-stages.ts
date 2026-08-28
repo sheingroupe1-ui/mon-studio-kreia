@@ -2,7 +2,7 @@ export const ANALYSIS_STEPS = [
   { id: "validate", label: "Vérification de la vidéo" },
   { id: "structure", label: "Analyse de la structure" },
   { id: "characters", label: "Identification des personnages" },
-  { id: "style", label: "Analyse du style visuel" },
+  { id: "style", label: "Application du style visuel" },
   { id: "scenes", label: "Analyse des scènes" },
   { id: "narrative", label: "Reconstruction narrative" },
   { id: "prepare", label: "Préparation de votre projet" },
@@ -17,15 +17,20 @@ export type AnalysisProgress = {
   segmentsDone?: number;
   segmentsTotal?: number;
   compact?: boolean;
+  debug?: string;
 };
 
 export function progressAt(step: number, extra?: Partial<AnalysisProgress>): AnalysisProgress {
   const i = Math.min(ANALYSIS_STEPS.length, Math.max(1, step)) - 1;
   const item = ANALYSIS_STEPS[i]!;
-  return {
+  const progress: AnalysisProgress = {
     step: i + 1,
     total: ANALYSIS_STEPS.length,
     label: item.label,
-    ...extra,
   };
+  if (extra?.compact) progress.compact = extra.compact;
+  if (typeof extra?.segmentsDone === "number") progress.segmentsDone = extra.segmentsDone;
+  if (typeof extra?.segmentsTotal === "number") progress.segmentsTotal = extra.segmentsTotal;
+  if (extra?.debug) progress.debug = extra.debug;
+  return progress;
 }

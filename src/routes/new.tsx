@@ -1,8 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   Apple,
+  Clapperboard,
   Feather,
   FileVideo,
+  Lightbulb,
   Link as LinkIcon,
   LoaderCircle,
   Upload,
@@ -11,7 +13,9 @@ import {
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AnalysisProgressView } from "@/components/kreia/analysis-progress.tsx";
+import { CharacterCast } from "@/components/kreia/character-cast.tsx";
 import { AppShell } from "@/components/kreia/shell.tsx";
+import { UserBriefForm } from "@/components/kreia/user-brief-form.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,10 +30,14 @@ import {
   videoMetaFromElement,
 } from "@/lib/kreia/frames";
 import { FUTURE_KINDS, KIND_REGISTRY, MODE_REGISTRY } from "@/lib/kreia/kinds";
+import { VISUAL_STYLE_REGISTRY, type VisualStyleId } from "@/lib/kreia/visual-styles";
+import { emptyBrief, isBriefEmpty } from "@/lib/kreia/user-brief";
+import type { UserBrief } from "@/lib/kreia/user-brief";
 import { failMessage, logKreia, logKreiaError, readServerResult, userFacingError } from "@/lib/kreia/rpc";
 import { useKreia } from "@/lib/kreia/store";
 import type {
   AnalysisCheckpoint,
+  CharacterSheet,
   FrameCapture,
   ProjectKind,
   ReconstructionMode,
@@ -49,6 +57,7 @@ function NewProject() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [flow, setFlow] = useState<"pick" | "video">("pick");
   const [source, setSource] = useState<SourceKind>("file");
   const [url, setUrl] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -56,7 +65,9 @@ function NewProject() {
   const [meta, setMeta] = useState<VideoMeta | null>(null);
   const [kind, setKind] = useState<ProjectKind>("human");
   const [mode, setMode] = useState<ReconstructionMode>("reconstruction");
-  const [notes, setNotes] = useState("");
+  const [styleId, setStyleId] = useState<VisualStyleId | null>(null);
+  const [styleText, setStyleText] = useState("");
+  const [brief, setBrief] = useState<UserBrief>(emptyBrief());
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<AnalysisProgress | null>(null);
   const [frames, setFrames] = useState<FrameCapture[]>([]);
@@ -64,6 +75,9 @@ function NewProject() {
   const [failed, setFailed] = useState(false);
   const [incomplete, setIncomplete] = useState(false);
   const [checkpoint, setCheckpoint] = useState<AnalysisCheckpoint | null>(null);
+  const [reviewingCast, setReviewingCast] = useState(false);
+  const [cast, setCast] = useState<CharacterSheet[]>([]);
+  const [reviewProjectId, setReviewProjectId] = useState<string | null>(null);
   const runningRef = useRef(false);
 
   const canAnalyze = Boolean(meta && objectUrl);
@@ -162,7 +176,7 @@ function NewProject() {
     }
   }
 
-  async function runAnalysis(opts?: { resume?: boolean }) {
+  async function runAnalysis(opts?: { resume?: boolean; checkpoint?: AnalysisCheckpoint | null }) {
     if (runningRef.current) return;
     if (!meta || !objectUrl) {
       const message =
@@ -187,13 +201,16 @@ function NewProject() {
         file,
         kind,
         mode,
-        notes,
+        notes: "",
+        brief,
+        chosenStyleId: styleId ?? undefined,
+        chosenStyleText: styleId === "custom" ? styleText : undefined,
         resume: opts?.resume,
-        checkpoint,
+        checkpoint: opts?.checkpoint ?? checkpoint,
         onProgress: setProgress,
         onFrames: setFrames,
         createDraft,
-        currentProjectId: useKreia.getState().current?.id ?? null,
+        currentProjectId: reviewProjectId ?? useKreia.getState().current?.id ?? null,
       });
 
       if (!result.ok) {
@@ -208,6 +225,23 @@ function NewProject() {
         throw new Error(result.error);
       }
 
+      if ("awaitingCastReview" in result && result.awaitingCastReview) {
+        setCheckpoint(result.checkpoint);
+        setCast(result.characters);
+        setReviewingCast(true);
+        setReviewProjectId(result.projectId);
+        setProgress(progressAt(3));
+        await patchCurrent({
+          status: "analyzing",
+          analysisCheckpoint: result.checkpoint,
+        });
+        toast.message("Vérifiez les personnages avant de continuer.");
+        return;
+      }
+
+      if (!("analysis" in result) || !result.analysis) {
+        throw new Error("L'analyse n'a pas pu être terminée. La réponse reçue est invalide. Veuillez réessayer.");
+      }
       await setAnalysis(result.analysis);
       toast.success("Analyse prête à vérifier.");
       await navigate({ to: "/projects/$id", params: { id: result.projectId } });
@@ -229,6 +263,39 @@ function NewProject() {
         <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--champagne)]">
           Nouveau projet
         </p>
+        {flow === "pick" ? (
+          <>
+            <h1 className="mt-2 font-display text-4xl tracking-[-0.03em] sm:text-5xl">
+              Comment voulez-vous commencer ?
+            </h1>
+            <p className="mt-2 text-sm text-[var(--fg-muted)]">Deux chemins, même résultat : un projet prêt à générer.</p>
+            <div className="mt-8 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setFlow("video")}
+                className="rounded-[24px] bg-[var(--bg-elevated)] p-6 text-left shadow-[var(--shadow-border)]"
+              >
+                <Clapperboard className="size-5" />
+                <h2 className="mt-4 font-display text-2xl">Reconstruire une vidéo</h2>
+                <p className="mt-2 text-sm leading-relaxed text-[var(--fg-muted)]">
+                  Importez une vidéo de référence. KREIA analyse sa structure pour reconstruire le projet.
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={() => void navigate({ to: "/idea" })}
+                className="rounded-[24px] bg-[var(--bg-elevated)] p-6 text-left shadow-[var(--shadow-border)]"
+              >
+                <Lightbulb className="size-5" />
+                <h2 className="mt-4 font-display text-2xl">Partir d'une idée</h2>
+                <p className="mt-2 text-sm leading-relaxed text-[var(--fg-muted)]">
+                  Décrivez votre histoire. KREIA construit le projet de A à Z, sans vidéo.
+                </p>
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
         <h1 className="mt-2 font-display text-4xl tracking-[-0.03em] sm:text-5xl">
           {step === 1 && "Ajouter la vidéo"}
           {step === 2 && "Type de reconstruction"}
@@ -371,6 +438,47 @@ function NewProject() {
                 ))}
               </div>
             </div>
+            <UserBriefForm brief={brief} onChange={setBrief} />
+            <div>
+              <h2 className="font-display text-2xl">Style visuel</h2>
+              <p className="mt-1 text-sm text-[var(--fg-muted)]">
+                Choisissez le rendu des prompts. Il n'est plus détecté automatiquement.
+              </p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {VISUAL_STYLE_REGISTRY.map((item) => {
+                  const selected = styleId === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setStyleId(item.id)}
+                      className={cn(
+                        "rounded-[20px] px-4 py-4 text-left shadow-[var(--shadow-border)]",
+                        selected
+                          ? "bg-[var(--accent-fill)] shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--accent)_40%,transparent)]"
+                          : "bg-[var(--bg-elevated)]",
+                      )}
+                    >
+                      <p className="text-sm font-medium">{item.label}</p>
+                      <p className="mt-1 text-sm text-[var(--fg-muted)]">{item.description}</p>
+                    </button>
+                  );
+                })}
+              </div>
+              {styleId === "custom" ? (
+                <div className="mt-3">
+                  <label className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--fg-subtle)]">
+                    Décrivez le style
+                  </label>
+                  <Textarea
+                    className="mt-2"
+                    value={styleText}
+                    onChange={(e) => setStyleText(e.target.value)}
+                    placeholder="Ex. 3D cartoon satiné, lumière chaude, textures de velours, caméra douce."
+                  />
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
@@ -394,18 +502,19 @@ function NewProject() {
                   <dt className="text-[var(--fg-subtle)]">Mode</dt>
                   <dd>{MODE_REGISTRY.find((m) => m.id === mode)?.label}</dd>
                 </div>
+                <div>
+                  <dt className="text-[var(--fg-subtle)]">Style visuel</dt>
+                  <dd>
+                    {styleId === "custom"
+                      ? styleText.trim() || "Personnalisé"
+                      : VISUAL_STYLE_REGISTRY.find((s) => s.id === styleId)?.label ?? "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[var(--fg-subtle)]">Brief</dt>
+                  <dd>{isBriefEmpty(brief) ? "Aucun" : "Renseigné"}</dd>
+                </div>
               </dl>
-            </div>
-            <div>
-              <label className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--fg-subtle)]">
-                Notes (optionnel)
-              </label>
-              <Textarea
-                className="mt-2"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Ex. le personnage en bleu est son frère, pas son mari."
-              />
             </div>
             {frames.length ? (
               <div className="flex gap-2 overflow-x-auto">
@@ -419,7 +528,55 @@ function NewProject() {
                 ))}
               </div>
             ) : null}
-            {progress ? <AnalysisProgressView progress={progress} /> : null}
+            {progress && !reviewingCast ? <AnalysisProgressView progress={progress} /> : null}
+            {reviewingCast ? (
+              <div className="rounded-[24px] bg-[var(--bg-elevated)] p-5 shadow-[var(--shadow-border)]">
+                <CharacterCast
+                  characters={cast}
+                  kind={kind}
+                  warnings={checkpoint?.limitations}
+                  validating={busy}
+                  onChange={setCast}
+                  onRerun={() => {
+                    const next: AnalysisCheckpoint = {
+                      ...(checkpoint ?? {
+                        version: 1,
+                        completed: [],
+                        segments: [],
+                        analyzedSegmentCount: 0,
+                        incomplete: false,
+                      }),
+                      version: 1,
+                      completed: (checkpoint?.completed ?? []).filter((s) => s !== "cast"),
+                      characters: [],
+                      castValidated: false,
+                      incomplete: false,
+                    };
+                    setReviewingCast(false);
+                    setCheckpoint(next);
+                    void runAnalysis({ resume: true, checkpoint: next });
+                  }}
+                  onValidate={() => {
+                    const next: AnalysisCheckpoint = {
+                      ...(checkpoint ?? {
+                        version: 1,
+                        completed: ["cast"],
+                        segments: [],
+                        analyzedSegmentCount: 0,
+                        incomplete: false,
+                      }),
+                      version: 1,
+                      characters: cast,
+                      castValidated: true,
+                      incomplete: false,
+                    };
+                    setCheckpoint(next);
+                    setReviewingCast(false);
+                    void runAnalysis({ resume: true, checkpoint: next });
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -433,20 +590,26 @@ function NewProject() {
           <Button
             type="button"
             variant="ghost"
-            disabled={step === 1 || busy}
-            onClick={() => setStep((s) => (s === 1 ? 1 : ((s - 1) as 1 | 2)))}
+            disabled={busy}
+            onClick={() => {
+              if (step === 1) setFlow("pick");
+              else setStep((s) => (s === 1 ? 1 : ((s - 1) as 1 | 2)));
+            }}
           >
             Retour
           </Button>
           {step < 3 ? (
             <Button
               type="button"
-              disabled={step === 1 && !canAnalyze}
+              disabled={
+                (step === 1 && !canAnalyze) ||
+                (step === 2 && (!styleId || (styleId === "custom" && !styleText.trim())))
+              }
               onClick={() => setStep((s) => (s === 3 ? 3 : ((s + 1) as 2 | 3)))}
             >
               Continuer
             </Button>
-          ) : (
+          ) : reviewingCast ? null : (
             <div className="flex flex-wrap gap-2">
               <Button type="button" disabled={!canAnalyze || busy} onClick={() => void runAnalysis()}>
                 {busy ? (
@@ -475,6 +638,8 @@ function NewProject() {
             </div>
           )}
         </div>
+          </>
+        )}
       </div>
     </AppShell>
   );

@@ -765,6 +765,9 @@ export function composeLockedVideoPrompt(args: {
     parts.push(
       "RESPECT ABSOLU DES DIALOGUES ET DE L'INTERPRÉTATION — une réplique = un personnage, ordre source, émotion et gestes observés.",
     );
+    parts.push(
+      "LANGUE PARLÉE : français uniquement. Traduire fidèlement le sens si la source n'est pas en français. Aucune réplique prononcée en anglais ou autre langue.",
+    );
     parts.push(dialogueBlock);
   } else {
     parts.push("Aucun dialogue dans cette scène. Ne pas en inventer. Bouches fermées.");

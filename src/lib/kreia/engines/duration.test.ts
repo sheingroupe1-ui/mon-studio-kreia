@@ -4,6 +4,8 @@ import {
   chooseSceneCount,
   collapseAnalysisScenes,
   collapseProductionScenes,
+  defaultIdeaDuration,
+  ideaSceneCount,
   packDurations,
   proposeSegments,
   totalPackedDuration,
@@ -123,5 +125,16 @@ describe("proposeSegments", () => {
     assert.equal(segs.length, 1);
     assert.equal(segs[0]?.start, 0);
     assert.equal(segs[0]?.end, 10);
+  });
+});
+
+describe("idea scenes", () => {
+  it("maps one minute to six 10-second scenes", () => {
+    assert.equal(ideaSceneCount(60), 6);
+    assert.equal(ideaSceneCount(30), 3);
+  });
+
+  it("picks a default duration from idea length", () => {
+    assert.equal(defaultIdeaDuration("trahison familiale"), 30);
   });
 });

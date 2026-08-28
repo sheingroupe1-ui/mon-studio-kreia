@@ -1,0 +1,768 @@
+import { o as __toESM } from "../_runtime.mjs";
+import { n as require_react } from "../_libs/@radix-ui/react-compose-refs+[...].mjs";
+import { S as require_jsx_runtime, b as useNavigate } from "../_libs/@tanstack/react-router+[...].mjs";
+import { n as TSS_SERVER_FUNCTION, r as getServerFnById, t as createServerFn } from "./ssr.mjs";
+import { r as createId } from "./ids-ckhly8rN.mjs";
+import { n as progressAt, t as ANALYSIS_STEPS } from "./analysis-stages-BnF573uV.mjs";
+import { C as Apple, d as Link, m as Feather, n as User, p as FileVideo, r as Upload, u as LoaderCircle } from "../_libs/lucide-react.mjs";
+import { a as cn, c as formatTimecode, d as useKreia, f as videoMetaFromElement, i as capturePlan, l as loadVideoElement, n as Button, o as extractFrames, s as formatDuration, t as AppShell, u as toAnalysisFrames } from "./store-CUNo2_1I.mjs";
+import { a as isPostTransportError, c as readServerResult, i as fitAnalyzePayload, l as runKreiaJob, n as Textarea, o as logKreia, r as failMessage, s as logKreiaError, t as Input, u as userFacingError } from "./job-client-D6ZHJdCO.mjs";
+import { n as KIND_REGISTRY, r as MODE_REGISTRY, t as FUTURE_KINDS } from "./kinds-DCkSzrW8.mjs";
+import { n as toast } from "../_libs/sonner.mjs";
+//#region node_modules/.nitro/vite/services/ssr/assets/new-CYxadMFZ.js
+var import_react = /* @__PURE__ */ __toESM(require_react());
+var import_jsx_runtime = require_jsx_runtime();
+function AnalysisProgressView({ progress }) {
+	if (!progress) return null;
+	const current = progress.step;
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+		className: "rounded-[var(--radius-lg)] bg-[var(--bg-elevated)] p-4 shadow-[var(--shadow-border)]",
+		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+				className: "flex items-center gap-2 text-sm text-[var(--fg)]",
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)(LoaderCircle, { className: "size-4 animate-spin text-[var(--accent)]" }),
+					progress.step,
+					"/",
+					progress.total,
+					" — ",
+					progress.label
+				]
+			}),
+			typeof progress.segmentsDone === "number" && typeof progress.segmentsTotal === "number" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+				className: "mt-1 text-xs text-[var(--fg-subtle)]",
+				children: [
+					"Analyse des segments : ",
+					progress.segmentsDone,
+					" / ",
+					progress.segmentsTotal
+				]
+			}) : progress.compact ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+				className: "mt-1 text-xs text-[var(--fg-subtle)]",
+				children: "Vidéo courte : personnages, style et scènes sont lus ensemble."
+			}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+				className: "mt-1 text-xs text-[var(--fg-subtle)]",
+				children: "Étape en cours."
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("ol", {
+				className: "mt-4 space-y-1.5",
+				children: ANALYSIS_STEPS.map((item, i) => {
+					const n = i + 1;
+					const state = n < current ? "done" : n === current ? "now" : "todo";
+					return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", {
+						className: cn("flex items-center gap-2 text-xs", state === "now" && "text-[var(--fg)]", state === "done" && "text-[var(--fg-muted)]", state === "todo" && "text-[var(--fg-subtle)]"),
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+							className: cn("flex size-5 items-center justify-center rounded-full font-mono text-[10px]", state === "now" && "bg-[var(--accent-fill)] text-[var(--fg)]", state === "done" && "bg-[var(--bg-subtle)]", state === "todo" && "bg-[var(--bg)]"),
+							children: n
+						}), item.label]
+					}, item.id);
+				})
+			})
+		]
+	});
+}
+var SAMPLE_RATE = 16e3;
+function writeWav(samples, sampleRate) {
+	const n = samples.length;
+	const buffer = /* @__PURE__ */ new ArrayBuffer(44 + n * 2);
+	const view = new DataView(buffer);
+	const ascii = (offset, text) => {
+		for (let i = 0; i < text.length; i += 1) view.setUint8(offset + i, text.charCodeAt(i));
+	};
+	ascii(0, "RIFF");
+	view.setUint32(4, 36 + n * 2, true);
+	ascii(8, "WAVE");
+	ascii(12, "fmt ");
+	view.setUint32(16, 16, true);
+	view.setUint16(20, 1, true);
+	view.setUint16(22, 1, true);
+	view.setUint32(24, sampleRate, true);
+	view.setUint32(28, sampleRate * 2, true);
+	view.setUint16(32, 2, true);
+	view.setUint16(34, 16, true);
+	ascii(36, "data");
+	view.setUint32(40, n * 2, true);
+	let offset = 44;
+	for (let i = 0; i < n; i += 1) {
+		const s = Math.max(-1, Math.min(1, samples[i] ?? 0));
+		view.setInt16(offset, s < 0 ? s * 32768 : s * 32767, true);
+		offset += 2;
+	}
+	return buffer;
+}
+function mixMonoRange(audio, startSec, endSec) {
+	const start = Math.max(0, Math.floor(audio.sampleRate * startSec));
+	const end = Math.min(audio.length, Math.floor(audio.sampleRate * endSec));
+	const length = Math.max(0, end - start);
+	const mono = new Float32Array(length);
+	const channels = audio.numberOfChannels;
+	for (let c = 0; c < channels; c += 1) {
+		const data = audio.getChannelData(c);
+		for (let i = 0; i < length; i += 1) mono[i] = (mono[i] ?? 0) + (data[start + i] ?? 0) / channels;
+	}
+	return mono;
+}
+function resample(input, fromRate, toRate) {
+	if (fromRate === toRate) return input;
+	const ratio = fromRate / toRate;
+	const outLen = Math.max(1, Math.round(input.length / ratio));
+	const out = new Float32Array(outLen);
+	for (let i = 0; i < outLen; i += 1) {
+		const src = i * ratio;
+		const i0 = Math.floor(src);
+		const i1 = Math.min(input.length - 1, i0 + 1);
+		const t = src - i0;
+		out[i] = (input[i0] ?? 0) * (1 - t) + (input[i1] ?? 0) * t;
+	}
+	return out;
+}
+function bytesToBase64(buffer) {
+	const bytes = new Uint8Array(buffer);
+	const chunk = 32768;
+	let binary = "";
+	for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+	return btoa(binary);
+}
+function rms(samples) {
+	if (!samples.length) return 0;
+	let sum = 0;
+	const step = Math.max(1, Math.floor(samples.length / 4e3));
+	let n = 0;
+	for (let i = 0; i < samples.length; i += step) {
+		const v = samples[i] ?? 0;
+		sum += v * v;
+		n += 1;
+	}
+	return Math.sqrt(sum / Math.max(1, n));
+}
+async function extractAudioChunks(file, durationSeconds) {
+	const ctx = new AudioContext();
+	try {
+		const data = await file.arrayBuffer();
+		const decoded = await ctx.decodeAudioData(data.slice(0));
+		if (decoded.duration < .4) return [];
+		const total = Math.min(decoded.duration, Number.isFinite(durationSeconds) ? durationSeconds : decoded.duration);
+		const chunkLen = 5;
+		const count = Math.min(12, Math.max(1, Math.ceil(total / chunkLen)));
+		const chunks = [];
+		for (let i = 0; i < count; i += 1) {
+			const start = i * chunkLen;
+			if (start >= total - .2) break;
+			const mono = mixMonoRange(decoded, start, Math.min(total, start + chunkLen));
+			if (rms(mono) < .004) continue;
+			const wav = writeWav(resample(mono, decoded.sampleRate, SAMPLE_RATE), SAMPLE_RATE);
+			chunks.push({
+				t: start,
+				wavBase64: bytesToBase64(wav)
+			});
+		}
+		return chunks;
+	} catch {
+		return [];
+	} finally {
+		await ctx.close().catch(() => void 0);
+	}
+}
+var activeSession = null;
+function emptyCheckpoint() {
+	return {
+		version: 1,
+		completed: [],
+		segments: [],
+		analyzedSegmentCount: 0,
+		incomplete: false
+	};
+}
+async function runFullVideoAnalysis(input) {
+	const session = createId("anl");
+	activeSession = session;
+	const report = (step, extra) => {
+		if (activeSession !== session) return;
+		input.onProgress(progressAt(step, extra));
+	};
+	try {
+		report(1);
+		console.info("[VIDEO VALIDATION] Starting", { session });
+		console.info("[VIDEO VALIDATION] Source exists:", Boolean(input.objectUrl && input.meta));
+		console.info("[VIDEO VALIDATION] Source type:", input.meta.source);
+		if (!input.objectUrl || !input.meta) {
+			console.error("[VIDEO VALIDATION ERROR]", {
+				exactSubStep: "source",
+				error: "missing source",
+				session
+			});
+			return {
+				ok: false,
+				error: "Aucune vidéo sélectionnée. Veuillez importer une vidéo avant de lancer l'analyse."
+			};
+		}
+		if (!Number.isFinite(input.meta.durationSeconds) || input.meta.durationSeconds <= 0) {
+			console.error("[VIDEO VALIDATION ERROR]", {
+				exactSubStep: "metadata",
+				error: "invalid duration",
+				session
+			});
+			return {
+				ok: false,
+				error: "La durée de la vidéo n'a pas pu être lue. Réimportez le fichier."
+			};
+		}
+		console.info("[VIDEO VALIDATION] File accessible:", Boolean(input.file || input.objectUrl));
+		console.info("[VIDEO VALIDATION] Metadata loading");
+		let extracted = [];
+		try {
+			const video = await loadVideoElement(input.objectUrl);
+			console.info("[VIDEO VALIDATION] Metadata loaded");
+			console.info("[VIDEO VALIDATION] Duration:", input.meta.durationSeconds);
+			extracted = await extractFrames(video, () => void 0);
+			video.removeAttribute("src");
+			video.load();
+		} catch (err) {
+			console.error("[VIDEO VALIDATION ERROR]", {
+				exactSubStep: "load",
+				error: err instanceof Error ? err.message : String(err),
+				session,
+				sourceType: input.meta.source,
+				fileExists: Boolean(input.file)
+			});
+			return {
+				ok: false,
+				error: err instanceof Error ? err.message : "Impossible de lire cette vidéo. Vérifiez le fichier et réessayez."
+			};
+		}
+		input.onFrames(extracted);
+		logKreia("analyze:frames", {
+			count: extracted.length,
+			session
+		});
+		if (!extracted.length) {
+			console.error("[VIDEO VALIDATION ERROR]", {
+				exactSubStep: "frames",
+				error: "no frames",
+				session
+			});
+			return {
+				ok: false,
+				error: "Pas assez d'images exploitables dans cette vidéo."
+			};
+		}
+		console.info("[VIDEO VALIDATION] Validation complete");
+		const checkpoint = input.resume && input.checkpoint ? {
+			...emptyCheckpoint(),
+			...input.checkpoint,
+			incomplete: false
+		} : emptyCheckpoint();
+		const planned = capturePlan(input.meta.durationSeconds);
+		const analysisFrames = await toAnalysisFrames(extracted, { maxFrames: Math.min(4, planned.analysis) });
+		let audioChunks = [];
+		if (input.file && !(input.resume && checkpoint.transcript)) try {
+			audioChunks = await extractAudioChunks(input.file, input.meta.durationSeconds);
+		} catch (err) {
+			logKreiaError("analyze:audio", err);
+			audioChunks = [];
+		}
+		let projectId = input.currentProjectId ?? "";
+		if (!input.resume || !projectId) projectId = (await input.createDraft({
+			kind: input.kind,
+			mode: input.mode,
+			video: input.meta,
+			frames: extracted,
+			thumbnailDataUrl: extracted[0]?.dataUrl,
+			userNotes: input.notes
+		})).id;
+		const send = (frames, chunks) => {
+			const fitted = fitAnalyzePayload({
+				frames,
+				audioWavBase64: null
+			});
+			return runKreiaJob("analyze", {
+				frames: fitted.frames,
+				audioChunks: chunks,
+				durationSeconds: input.meta.durationSeconds,
+				width: input.meta.width,
+				height: input.meta.height,
+				kind: input.kind,
+				userNotes: input.notes,
+				checkpoint
+			}, (p) => {
+				if (activeSession !== session) return;
+				input.onProgress(p);
+			});
+		};
+		let result;
+		try {
+			result = await send(analysisFrames, audioChunks);
+		} catch (err) {
+			if (!isPostTransportError(err)) throw err;
+			logKreiaError("analyze:retry-compact-post", err);
+			result = await send(await toAnalysisFrames(extracted, {
+				maxFrames: 2,
+				maxWidth: 256,
+				quality: .24,
+				maxChars: 14e3
+			}), audioChunks.slice(0, 1));
+		}
+		if (activeSession !== session) return {
+			ok: false,
+			error: "L'analyse a été remplacée par une nouvelle session."
+		};
+		if (!result.ok) return {
+			ok: false,
+			error: failMessage(result, result.incomplete ? "Analyse incomplète." : "L'analyse n'a pas pu être terminée. La réponse reçue est invalide. Veuillez réessayer."),
+			checkpoint: result.checkpoint,
+			incomplete: result.incomplete
+		};
+		if (!result.analysis) return {
+			ok: false,
+			error: "L'analyse n'a pas pu être terminée. La réponse reçue est invalide. Veuillez réessayer."
+		};
+		return {
+			ok: true,
+			analysis: result.analysis,
+			projectId
+		};
+	} catch (err) {
+		logKreiaError("analyze:orchestrator", err);
+		return {
+			ok: false,
+			error: err instanceof Error && err.message.trim() ? err.message : "L'analyse a échoué. Aucun contenu n'a été inventé."
+		};
+	} finally {
+		if (activeSession === session) activeSession = null;
+	}
+}
+var createSsrRpc = (functionId) => {
+	const url = "/_serverFn/" + functionId;
+	const serverFnMeta = { id: functionId };
+	const fn = async (...args) => {
+		return (await getServerFnById(functionId, { origin: "server" }))(...args);
+	};
+	return Object.assign(fn, {
+		url,
+		serverFnMeta,
+		[TSS_SERVER_FUNCTION]: true
+	});
+};
+createServerFn({ method: "GET" }).handler(createSsrRpc("68e121ddd88b9bb75a31f03876ea2201702cd0929c1824b2eea072181dc5409e"));
+var probeVideoUrl = createServerFn({ method: "POST" }).validator((input) => input).handler(createSsrRpc("2c9e0efd825c3cfc42bb33ba0a2c2c38d16b972cd2738d6bcd5a9f235f1794fa"));
+createServerFn({ method: "POST" }).validator((input) => input).handler(createSsrRpc("d7a2a55277debbccd2a6e433903c8474f5ab433e414f59cdc62f39185b188c7a"));
+createServerFn({ method: "POST" }).validator((input) => input).handler(createSsrRpc("d692495fddea21eccdb7e7ba7b37d5471320af0bc9a833e48f3a9cbc3c883458"));
+createServerFn({ method: "POST" }).validator((input) => input).handler(createSsrRpc("2742d6b640efda8a639b4709a114d1e91b44445a48de2dee31b1e13947999e80"));
+createServerFn({ method: "POST" }).validator((input) => input).handler(createSsrRpc("d3cda9f74722bfabb87c80a99410b35e7e3b7a36d4dee4e8a9908d3d431de242"));
+function NewProject() {
+	const navigate = useNavigate();
+	const createDraft = useKreia((s) => s.createDraft);
+	const setAnalysis = useKreia((s) => s.setAnalysis);
+	const patchCurrent = useKreia((s) => s.patchCurrent);
+	const fileRef = (0, import_react.useRef)(null);
+	const [step, setStep] = (0, import_react.useState)(1);
+	const [source, setSource] = (0, import_react.useState)("file");
+	const [url, setUrl] = (0, import_react.useState)("");
+	const [file, setFile] = (0, import_react.useState)(null);
+	const [objectUrl, setObjectUrl] = (0, import_react.useState)(null);
+	const [meta, setMeta] = (0, import_react.useState)(null);
+	const [kind, setKind] = (0, import_react.useState)("human");
+	const [mode, setMode] = (0, import_react.useState)("reconstruction");
+	const [notes, setNotes] = (0, import_react.useState)("");
+	const [busy, setBusy] = (0, import_react.useState)(false);
+	const [progress, setProgress] = (0, import_react.useState)(null);
+	const [frames, setFrames] = (0, import_react.useState)([]);
+	const [error, setError] = (0, import_react.useState)(null);
+	const [failed, setFailed] = (0, import_react.useState)(false);
+	const [incomplete, setIncomplete] = (0, import_react.useState)(false);
+	const [checkpoint, setCheckpoint] = (0, import_react.useState)(null);
+	const runningRef = (0, import_react.useRef)(false);
+	const canAnalyze = Boolean(meta && objectUrl);
+	const sourceLabel = (0, import_react.useMemo)(() => {
+		if (file) return file.name;
+		if (url.trim()) return url.trim();
+		return null;
+	}, [file, url]);
+	function resetVideo() {
+		if (objectUrl) URL.revokeObjectURL(objectUrl);
+		setObjectUrl(null);
+		setFile(null);
+		setMeta(null);
+		setFrames([]);
+	}
+	async function onPickFile(next) {
+		setError(null);
+		if (!next) return;
+		if (!next.type.startsWith("video/")) {
+			setError("Ce fichier n'est pas une vidéo compatible.");
+			return;
+		}
+		if (next.size > 146800640) {
+			setError("Cette vidéo est trop volumineuse (limite 140 Mo). Compressez-la puis réessayez.");
+			return;
+		}
+		resetVideo();
+		const src = URL.createObjectURL(next);
+		try {
+			const video = await loadVideoElement(src);
+			setFile(next);
+			setObjectUrl(src);
+			setMeta(videoMetaFromElement(video, next.name, "file"));
+			video.removeAttribute("src");
+			video.load();
+		} catch (err) {
+			URL.revokeObjectURL(src);
+			setError(err instanceof Error ? err.message : "Impossible de lire cette vidéo.");
+		}
+	}
+	async function onSubmitUrl() {
+		setError(null);
+		const trimmed = url.trim();
+		if (!trimmed) {
+			setError("Collez un lien vidéo.");
+			return;
+		}
+		logKreia("probe:start", {
+			source,
+			url: trimmed.slice(0, 180)
+		});
+		setBusy(true);
+		try {
+			const probeRaw = await probeVideoUrl({ data: { url: trimmed } });
+			const probe = readServerResult(probeRaw, "probeVideoUrl");
+			if (!probe.ok) {
+				logKreia("probe:rejected", probe);
+				setError(failMessage(probe, "Cette vidéo ne peut pas être récupérée directement depuis ce lien. Veuillez importer la vidéo."));
+				return;
+			}
+			resetVideo();
+			try {
+				const video = await loadVideoElement(trimmed);
+				setObjectUrl(trimmed);
+				setMeta(videoMetaFromElement(video, trimmed.split("/").pop() || "video", source === "tiktok" ? "tiktok" : "url", trimmed));
+				logKreia("probe:video-loaded");
+			} catch (err) {
+				logKreiaError("probe:video-load", err);
+				setError("Cette vidéo ne peut pas être analysée directement depuis ce lien. Veuillez importer la vidéo.");
+			}
+		} catch (err) {
+			logKreiaError("probe:failed", err);
+			setError(userFacingError(err, "Cette vidéo ne peut pas être récupérée directement depuis ce lien. Veuillez importer la vidéo."));
+		} finally {
+			setBusy(false);
+		}
+	}
+	async function runAnalysis(opts) {
+		if (runningRef.current) return;
+		if (!meta || !objectUrl) {
+			const message = "Aucune vidéo sélectionnée. Veuillez importer une vidéo avant de lancer l'analyse.";
+			setFailed(true);
+			setError(message);
+			toast.error(message);
+			return;
+		}
+		runningRef.current = true;
+		setError(null);
+		setFailed(false);
+		setIncomplete(false);
+		setBusy(true);
+		setProgress(progressAt(1));
+		try {
+			const result = await runFullVideoAnalysis({
+				meta,
+				objectUrl,
+				file,
+				kind,
+				mode,
+				notes,
+				resume: opts?.resume,
+				checkpoint,
+				onProgress: setProgress,
+				onFrames: setFrames,
+				createDraft,
+				currentProjectId: useKreia.getState().current?.id ?? null
+			});
+			if (!result.ok) {
+				if (result.checkpoint) setCheckpoint(result.checkpoint);
+				setIncomplete(Boolean(result.incomplete && result.checkpoint));
+				await patchCurrent({
+					status: result.incomplete ? "incomplete" : "error",
+					errorMessage: result.error,
+					analysisCheckpoint: result.checkpoint,
+					analysisIncomplete: Boolean(result.incomplete)
+				});
+				throw new Error(result.error);
+			}
+			await setAnalysis(result.analysis);
+			toast.success("Analyse prête à vérifier.");
+			await navigate({
+				to: "/projects/$id",
+				params: { id: result.projectId }
+			});
+		} catch (err) {
+			logKreiaError("analyze:failed", err);
+			const message = userFacingError(err, "L'analyse a échoué. Aucun contenu n'a été inventé.");
+			setFailed(true);
+			setError(message);
+			toast.error(message);
+		} finally {
+			runningRef.current = false;
+			setBusy(false);
+		}
+	}
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(AppShell, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+		className: "mx-auto max-w-3xl",
+		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+				className: "text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--champagne)]",
+				children: "Nouveau projet"
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h1", {
+				className: "mt-2 font-display text-4xl tracking-[-0.03em] sm:text-5xl",
+				children: [
+					step === 1 && "Ajouter la vidéo",
+					step === 2 && "Type de reconstruction",
+					step === 3 && "Lancer l'analyse"
+				]
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+				className: "mt-2 text-sm text-[var(--fg-muted)]",
+				children: [
+					"Étape ",
+					step,
+					" / 3"
+				]
+			}),
+			step === 1 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "mt-8 space-y-4",
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "grid gap-2 sm:grid-cols-3",
+						children: [
+							{
+								id: "file",
+								label: "Fichier",
+								Icon: Upload
+							},
+							{
+								id: "tiktok",
+								label: "TikTok",
+								Icon: FileVideo
+							},
+							{
+								id: "url",
+								label: "Lien",
+								Icon: Link
+							}
+						].map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+							type: "button",
+							onClick: () => setSource(item.id),
+							className: cn("rounded-[20px] px-4 py-3 text-left shadow-[var(--shadow-border)]", source === item.id ? "bg-[var(--accent-fill)]" : "bg-[var(--bg-elevated)]"),
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(item.Icon, { className: "size-4" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "mt-2 text-sm font-medium",
+								children: item.label
+							})]
+						}, item.id))
+					}),
+					source === "file" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "rounded-[24px] bg-[var(--bg-elevated)] p-5 shadow-[var(--shadow-border)]",
+						children: [
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+								ref: fileRef,
+								type: "file",
+								accept: "video/*",
+								className: "hidden",
+								onChange: (e) => void onPickFile(e.target.files?.[0] ?? null)
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Button, {
+								type: "button",
+								onClick: () => fileRef.current?.click(),
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Upload, { className: "size-4" }), "Importer une vidéo"]
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "mt-3 text-xs text-[var(--fg-subtle)]",
+								children: "MP4 ou WebM, jusqu'à 140 Mo. L'analyse reste sur cet appareil."
+							})
+						]
+					}) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "rounded-[24px] bg-[var(--bg-elevated)] p-5 shadow-[var(--shadow-border)]",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "flex gap-2",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Input, {
+								value: url,
+								onChange: (e) => setUrl(e.target.value),
+								placeholder: "https://"
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Button, {
+								type: "button",
+								onClick: () => void onSubmitUrl(),
+								disabled: busy,
+								children: "Vérifier"
+							})]
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+							className: "mt-3 text-xs leading-relaxed text-[var(--fg-subtle)]",
+							children: "Si la plateforme bloque l'accès, importez le fichier. KREIA n'invente jamais une analyse à partir d'un lien mort."
+						})]
+					}),
+					meta ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "flex items-center justify-between gap-3 rounded-[20px] bg-[var(--bg-subtle)] px-4 py-3 text-sm",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "min-w-0",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "truncate text-[var(--fg)]",
+								children: sourceLabel
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+								className: "text-[var(--fg-subtle)]",
+								children: [
+									formatDuration(meta.durationSeconds),
+									" · ",
+									meta.width,
+									"×",
+									meta.height
+								]
+							})]
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Button, {
+							variant: "ghost",
+							size: "sm",
+							onClick: resetVideo,
+							children: "Retirer"
+						})]
+					}) : null
+				]
+			}) : null,
+			step === 2 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "mt-8 space-y-8",
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "grid gap-3 sm:grid-cols-3",
+						children: KIND_REGISTRY.map((item) => {
+							const Icon = item.id === "human" ? User : item.id === "angel" ? Feather : Apple;
+							const selected = kind === item.id;
+							return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+								type: "button",
+								onClick: () => setKind(item.id),
+								className: cn("rounded-[24px] p-5 text-left shadow-[var(--shadow-border)] transition-colors duration-150", selected ? "bg-[var(--accent-fill)] text-[var(--fg)] shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--accent)_40%,transparent)]" : "bg-[var(--bg-elevated)] text-[var(--fg)]"),
+								children: [
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Icon, { className: "size-5" }),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", {
+										className: "mt-3 font-display text-2xl",
+										children: item.label
+									}),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+										className: cn("mt-2 text-sm leading-relaxed", selected ? "text-[var(--accent)]" : "text-[var(--fg-muted)]"),
+										children: item.description
+									})
+								]
+							}, item.id);
+						})
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+						className: "text-xs text-[var(--fg-subtle)]",
+						children: [
+							"Plus tard : ",
+							FUTURE_KINDS.join(" · "),
+							"."
+						]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", {
+						className: "font-display text-2xl",
+						children: "Niveau de reconstruction"
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "mt-3 grid gap-3",
+						children: MODE_REGISTRY.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+							type: "button",
+							onClick: () => setMode(item.id),
+							className: cn("rounded-[20px] px-4 py-4 text-left shadow-[var(--shadow-border)]", mode === item.id ? "bg-[var(--accent-fill)] shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--accent)_40%,transparent)]" : "bg-[var(--bg-elevated)]"),
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "text-sm font-medium",
+								children: item.label
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "mt-1 text-sm text-[var(--fg-muted)]",
+								children: item.description
+							})]
+						}, item.id))
+					})] })
+				]
+			}) : null,
+			step === 3 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "mt-8 space-y-5",
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "rounded-[24px] bg-[var(--bg-elevated)] p-5 shadow-[var(--shadow-border)]",
+						children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("dl", {
+							className: "grid gap-3 text-sm sm:grid-cols-2",
+							children: [
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
+									className: "text-[var(--fg-subtle)]",
+									children: "Source"
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("dd", {
+									className: "truncate",
+									children: sourceLabel
+								})] }),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
+									className: "text-[var(--fg-subtle)]",
+									children: "Durée"
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("dd", { children: meta ? formatDuration(meta.durationSeconds) : "—" })] }),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
+									className: "text-[var(--fg-subtle)]",
+									children: "Type"
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("dd", { children: KIND_REGISTRY.find((k) => k.id === kind)?.label })] }),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("dt", {
+									className: "text-[var(--fg-subtle)]",
+									children: "Mode"
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("dd", { children: MODE_REGISTRY.find((m) => m.id === mode)?.label })] })
+							]
+						})
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
+						className: "text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--fg-subtle)]",
+						children: "Notes (optionnel)"
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Textarea, {
+						className: "mt-2",
+						value: notes,
+						onChange: (e) => setNotes(e.target.value),
+						placeholder: "Ex. le personnage en bleu est son frère, pas son mari."
+					})] }),
+					frames.length ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "flex gap-2 overflow-x-auto",
+						children: frames.map((f) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", {
+							src: f.dataUrl,
+							alt: formatTimecode(f.t),
+							className: "h-16 w-28 rounded-[var(--radius-sm)] object-cover outline outline-1 -outline-offset-1 outline-white/10"
+						}, f.t))
+					}) : null,
+					progress ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(AnalysisProgressView, { progress }) : null
+				]
+			}) : null,
+			error ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+				className: "mt-5 rounded-[var(--radius-md)] bg-[color-mix(in_oklab,var(--color-danger)_14%,transparent)] px-4 py-3 text-sm text-[#f3c7bf]",
+				children: error
+			}) : null,
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "mt-8 flex flex-wrap items-center justify-between gap-3",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Button, {
+					type: "button",
+					variant: "ghost",
+					disabled: step === 1 || busy,
+					onClick: () => setStep((s) => s === 1 ? 1 : s - 1),
+					children: "Retour"
+				}), step < 3 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Button, {
+					type: "button",
+					disabled: step === 1 && !canAnalyze,
+					onClick: () => setStep((s) => s === 3 ? 3 : s + 1),
+					children: "Continuer"
+				}) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "flex flex-wrap gap-2",
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Button, {
+						type: "button",
+						disabled: !canAnalyze || busy,
+						onClick: () => void runAnalysis(),
+						children: busy ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(LoaderCircle, { className: "size-4 animate-spin" }), "Analyse en cours…"] }) : incomplete ? "Recommencer l'analyse" : failed ? "Réessayer l'analyse" : "Analyser la vidéo"
+					}), incomplete && checkpoint && !busy ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Button, {
+						type: "button",
+						variant: "outline",
+						disabled: !canAnalyze,
+						onClick: () => void runAnalysis({ resume: true }),
+						children: "Reprendre l'analyse"
+					}) : null]
+				})]
+			})
+		]
+	}) });
+}
+//#endregion
+export { NewProject as component };

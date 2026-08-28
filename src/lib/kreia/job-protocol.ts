@@ -10,6 +10,7 @@ export type JobProgress = {
   segmentsDone?: number;
   segmentsTotal?: number;
   compact?: boolean;
+  debug?: string;
 };
 
 export type JobClientSnapshot = {
@@ -19,20 +20,28 @@ export type JobClientSnapshot = {
   error?: string;
   frameCount?: number;
   progress?: JobProgress;
+  phase?: string;
+  debug?: string;
 };
 
 export function messageFromHttpBody(body: string, status: number): string {
   const trimmed = body.trim();
   if (!trimmed) {
-    return status === 404 ? JOB_MISSING_MESSAGE : JOB_TRANSPORT_MESSAGE;
+    return `HTTP ${status} — corps vide. ${status === 404 ? JOB_MISSING_MESSAGE : JOB_TRANSPORT_MESSAGE}`;
   }
-  if (looksLikeHtml(trimmed)) return JOB_TRANSPORT_MESSAGE;
+  if (looksLikeHtml(trimmed)) {
+    return `HTTP ${status} HTML (proxy/timeout). ${JOB_TRANSPORT_MESSAGE} Aperçu: ${trimmed.slice(0, 120).replace(/\s+/g, " ")}`;
+  }
   try {
-    const parsed = JSON.parse(trimmed) as { error?: unknown; ok?: unknown };
+    const parsed = JSON.parse(trimmed) as { error?: unknown; ok?: unknown; debug?: unknown; phase?: unknown };
     if (parsed && typeof parsed.error === "string" && parsed.error.trim()) {
       const err = parsed.error.trim();
-      if (/introuvable/i.test(err) || err.startsWith("{")) return JOB_MISSING_MESSAGE;
-      return err.slice(0, 220);
+      const debug = typeof parsed.debug === "string" ? ` [${parsed.debug}]` : "";
+      const phase = typeof parsed.phase === "string" ? ` phase=${parsed.phase}` : "";
+      if (/introuvable/i.test(err) || err.startsWith("{")) {
+        return `${JOB_MISSING_MESSAGE}${phase}${debug}`;
+      }
+      return `${err.slice(0, 400)}${phase}${debug}`;
     }
   } catch {
     /* not json */
@@ -40,7 +49,7 @@ export function messageFromHttpBody(body: string, status: number): string {
   if (/introuvable/i.test(trimmed) || trimmed.startsWith("{")) return JOB_MISSING_MESSAGE;
   if (status === 404) return JOB_MISSING_MESSAGE;
   if (status === 413) return "payload too large";
-  return JOB_TRANSPORT_MESSAGE;
+  return `HTTP ${status}: ${trimmed.slice(0, 220)}`;
 }
 
 export class JobTransportError extends Error {
@@ -82,7 +91,7 @@ export function parseJobSnapshot(value: unknown): JobClientSnapshot {
     rec.progress && typeof rec.progress === "object"
       ? (rec.progress as JobProgress)
       : undefined;
-  return {
+  const snap: JobClientSnapshot = {
     id,
     status,
     result: rec.result,
@@ -90,6 +99,9 @@ export function parseJobSnapshot(value: unknown): JobClientSnapshot {
     frameCount: typeof rec.frameCount === "number" ? rec.frameCount : undefined,
     progress,
   };
+  if (typeof rec.phase === "string") snap.phase = rec.phase;
+  if (typeof rec.debug === "string") snap.debug = rec.debug;
+  return snap;
 }
 
 export function isPostTransportError(err: unknown): boolean {

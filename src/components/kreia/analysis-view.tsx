@@ -3,19 +3,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDuration, formatTimecode } from "@/lib/kreia/frames";
 import { kindById, modeById } from "@/lib/kreia/kinds";
-import { swatchForCharacter } from "@/lib/kreia/engines/dialogues";
-import { labelCharacterType } from "@/lib/kreia/engines/identity";
 import type { KreiaProject, VideoAnalysis } from "@/lib/kreia/types";
 import { DialogueBoard } from "./dialogue-board.tsx";
+import { CharacterCast } from "./character-cast.tsx";
 import { ConfidenceBadge } from "./confidence.tsx";
 import { CopyButton } from "./copy-button.tsx";
 import { Field, SectionCard } from "./section-card.tsx";
-
-const PROMINENCE = {
-  principal: "Principal",
-  secondary: "Secondaire",
-  punctual: "Ponctuel",
-} as const;
 
 export function AnalysisView({
   project,
@@ -107,62 +100,20 @@ export function AnalysisView({
       </SectionCard>
 
       <SectionCard kicker="Continuité" title="Personnages">
-        {analysis.characters.length === 0 ? (
-          <p className="text-sm text-[var(--fg-muted)]">
-            Aucun personnage n'a pu être identifié de façon fiable.
-          </p>
-        ) : (
-          <div className="grid gap-3">
-            {analysis.characters.map((c) => (
-              <article
-                key={c.id}
-                className="rounded-[var(--radius-lg)] bg-[var(--bg)] p-4 shadow-[inset_0_0_0_1px_var(--border)]"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-3">
-                    <span
-                      className="size-2.5 rounded-full"
-                      style={{
-                        background: `var(${swatchForCharacter(c, analysis.characters.indexOf(c)).cssVar})`,
-                      }}
-                    />
-                    <div>
-                    <p className="font-mono text-[11px] tracking-wide text-[var(--accent)]">
-                      {c.id}
-                    </p>
-                    <h3 className="font-display text-xl text-[var(--fg)]">
-                      {c.name || c.designation}
-                    </h3>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Badge>{labelCharacterType(c.characterType)}</Badge>
-                    <Badge>{PROMINENCE[c.prominence]}</Badge>
-                    <ConfidenceBadge value={c.nameConfidence} />
-                  </div>
-                </div>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <Field label="Rôle" value={c.role} />
-                  <Field label="Âge apparent" value={c.ageApparent} />
-                  <Field label="Apparence" value={c.appearance} />
-                  <Field label="Espèce / nature" value={c.species ?? ""} />
-                  <Field label="Structure" value={c.bodyStructure ?? c.morphology} />
-                  <Field label="Vêtements" value={c.clothing} />
-                  <Field label="Coiffure" value={c.hair} />
-                  <Field label="Yeux" value={c.eyes} />
-                  <Field label="Ailes (si vues)" value={c.wings ?? ""} />
-                  <Field label="Traits distinctifs" value={c.distinctiveFeatures ?? ""} />
-                  <Field label="Relations" value={c.relationships} />
-                  <Field label="Personnalité" value={c.personality} />
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
+        <CharacterCast
+          characters={analysis.characters}
+          kind={project.kind}
+          onChange={(characters) =>
+            onAnalysisChange?.({
+              ...analysis,
+              characters: characters.map((c) => ({ ...c, userLocked: true })),
+            })
+          }
+        />
       </SectionCard>
 
       <SectionCard
-        kicker="Contrainte de production"
+        kicker="Choix de production"
         title="Style visuel"
         action={<ConfidenceBadge value={analysis.visualStyle.confidence} />}
       >

@@ -16,7 +16,7 @@ MISSION
 À partir des photogrammes (et éventuellement d'une transcription), produire une ANALYSE fidèle :
 1. ce qui est raconté (contenu)
 2. comment c'est raconté (structure, hook, rythme)
-3. à quoi ça ressemble (style visuel, langage cinématographique)
+3. le style visuel CHOISI par l'utilisateur (ne pas le redétecter)
 4. ce qui s'entend — DIALOGUES SOURCE VERROUILLÉS
 
 RÈGLE ANTI-HALLUCINATION — PRIORITÉ ABSOLUE
@@ -36,10 +36,10 @@ Interdit :
 
 Si une information manque, mets une chaîne vide, null, ou ajoute-la dans "limitations". Ne comble pas les trous.
 
-STYLE VISUEL — PRIORITÉ
-Identifie précisément le rendu (photoréaliste, semi-réaliste, 3D, 2D, animation, illustration, etc.) et le style artistique.
-Produis une lockedStylePhrase courte et impérative, ex. « 3D cartoon cinématographique, éclairage studio chaud, textures satinées ».
-Cette phrase deviendra une contrainte de production. Ne la dilue pas.
+STYLE VISUEL — CONTRAINTE UTILISATEUR
+Le style visuel est CHOISI par l'utilisateur, pas détecté.
+Reproduis exactement lockedStylePhrase fournie. Interdit de la remplacer, de l'adoucir ou d'en inventer une autre à partir des images.
+Tisse cette phrase dans chaque scène (rendu, éclairage, textures). Ne crée pas un bloc « STYLE VISUEL » séparé.
 
 PERSONNAGES
 - Attribue des IDs stables : CHARACTER_01… (humain), FRUIT_CHARACTER_01… (fruit), ANGEL_CHARACTER_01… (ange).
@@ -122,7 +122,7 @@ MÉTA DONNÉES VIDÉO
 - photogrammes fournis (dans l'ordre) : ${times}
 - transcription audio : ${args.transcript ? "fournie ci-dessous — C'EST LA RÉFÉRENCE DES DIALOGUES, à recopier mot à mot" : "non disponible — ne pas inventer de dialogues ; sous-titres à l'écran uniquement si lisibles"}
 - plafond de scènes : ${args.durationSeconds <= 11 ? "1 scène unique" : args.durationSeconds <= 16 ? "2 scènes maximum" : `environ ${Math.max(1, Math.round(args.durationSeconds / 8))} scènes, jamais plus de ${Math.max(1, Math.round(args.durationSeconds / 6))}`}
-${args.userNotes ? `- notes utilisateur : ${args.userNotes}` : ""}
+${args.userNotes ? `- brief / notes utilisateur (contexte complémentaire, à croiser avec la vidéo, pas une vérité absolue) :\n${args.userNotes}` : ""}
 
 ${args.transcript ? `TRANSCRIPTION (source observée)\n${args.transcript}\n` : ""}
 

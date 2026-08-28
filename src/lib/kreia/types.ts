@@ -1,3 +1,5 @@
+import type { UserBrief } from "./user-brief";
+
 export const PROJECT_KINDS = ["human", "fruit-humanoid", "angel"] as const;
 export type ProjectKind = (typeof PROJECT_KINDS)[number];
 
@@ -87,6 +89,7 @@ export type CharacterSheet = {
   lockedTraits: string[];
   notes: string;
   dialogueColor?: string;
+  userLocked?: boolean;
 };
 
 export type HookAnalysis = {
@@ -312,7 +315,7 @@ export type SegmentNote = {
 
 export type AnalysisCheckpoint = {
   version: 1;
-  completed: Array<"cast" | "segments" | "narrative">;
+  completed: Array<"structure" | "cast" | "segments" | "narrative">;
   characters?: CharacterSheet[];
   visualStyle?: VisualStyleAnalysis;
   cinematic?: CinematicLanguage;
@@ -327,6 +330,8 @@ export type AnalysisCheckpoint = {
   failedMessage?: string;
   transcript?: string | null;
   transcriptNote?: string;
+  castValidated?: boolean;
+  userBrief?: UserBrief;
 };
 
 export type KreiaProject = {
@@ -345,6 +350,7 @@ export type KreiaProject = {
   production?: ProductionPlan;
   analysisEdits: string[];
   userNotes: string;
+  userBrief?: UserBrief;
   analysisCheckpoint?: AnalysisCheckpoint;
   analysisIncomplete?: boolean;
 };
@@ -364,6 +370,9 @@ export type AnalyzeInput = {
   kind: ProjectKind;
   userNotes?: string;
   checkpoint?: AnalysisCheckpoint;
+  chosenStyleId?: string;
+  chosenStyleText?: string;
+  userBrief?: UserBrief;
 };
 
 export type GenerateInput = {
@@ -400,3 +409,73 @@ export type ReviseProductionInput = {
     sceneNumber?: number;
   };
 };
+
+export type CreativeDirection = "strict" | "balanced" | "develop";
+
+export type IdeateInput = {
+  kind: ProjectKind;
+  idea: string;
+  extras?: string;
+  durationSeconds: number;
+  sceneCount: number;
+  direction: CreativeDirection;
+  chosenStyleId?: string;
+  chosenStyleText?: string;
+  styleImageDataUrl?: string | null;
+  userNotes?: string;
+};
+
+export const IDEA_PHASES = [
+  "understand",
+  "story",
+  "characters",
+  "visual",
+  "scenes",
+  "dialogues",
+  "prepare",
+] as const;
+export type IdeaPhase = (typeof IDEA_PHASES)[number];
+
+export type IdeaUnderstanding = {
+  mainIdea: string;
+  genre: string;
+  conflict: string;
+  events: string[];
+  mentionedCharacters: string[];
+  relations: string[];
+  locations: string[];
+  emotions: string[];
+  givenFacts: string[];
+  missing: string[];
+};
+
+export type IdeaStory = {
+  title: string;
+  logline: string;
+  beginning: string;
+  progression: string;
+  conflict: string;
+  twists: string[];
+  climax: string;
+  ending: string;
+  tone: string;
+  subject: string;
+};
+
+export type IdeaCheckpoint = {
+  version: 1;
+  phase: IdeaPhase;
+  completed: IdeaPhase[];
+  understanding?: IdeaUnderstanding;
+  story?: IdeaStory;
+  characters?: CharacterSheet[];
+  visualStyle?: VisualStyleAnalysis;
+  cinematic?: CinematicLanguage;
+  scenes?: SceneAnalysis[];
+  dialogues?: LockedDialogueBible;
+  analysis?: VideoAnalysis;
+  production?: ProductionPlan;
+  failedPhase?: IdeaPhase;
+  failedMessage?: string;
+};
+

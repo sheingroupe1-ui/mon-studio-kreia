@@ -13,7 +13,7 @@ import {
 import { logKreia, logKreiaError, TRANSPORT_MESSAGE, userFacingError } from "./rpc";
 
 export const JOB_POLL_MS = 1200;
-export const JOB_WAIT_MS = 360_000;
+export const JOB_WAIT_MS = 720_000;
 
 export {
   isPostTransportError,
@@ -70,7 +70,7 @@ async function pollJob(id: string): Promise<JobClientSnapshot> {
       const missing =
         /n'est plus disponible|introuvable/i.test(msg) ||
         (err instanceof JobTransportError && /session/i.test(err.message));
-      if (!missing && attempt > 1) break;
+      if (missing && attempt > 1) break;
       await sleep(400 * (attempt + 1));
     }
   }
@@ -167,7 +167,9 @@ async function waitForDone<T extends { ok: true }>(
     throw lastPollErr;
   }
   throw new Error(
-    "L'analyse a dépassé le délai imparti. Réessayez avec une vidéo plus courte.",
+    type === "ideate"
+      ? "La construction a dépassé le délai. Réessayez cette étape."
+      : "L'analyse a dépassé le délai imparti. Réessayez avec une vidéo plus courte.",
   );
 }
 
@@ -215,7 +217,10 @@ async function runAnalyzeChunked<T extends { ok: true }>(
     height: payload.height,
     kind: payload.kind,
     userNotes: payload.userNotes,
+    userBrief: payload.userBrief,
     checkpoint: payload.checkpoint,
+    chosenStyleId: payload.chosenStyleId,
+    chosenStyleText: payload.chosenStyleText,
   };
   const started = await postOp({ op: "start", id: created.id, payload: meta });
   logKreia("job:started", { id: started.id, frames: started.frameCount });

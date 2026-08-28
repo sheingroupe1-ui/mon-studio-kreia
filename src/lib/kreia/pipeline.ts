@@ -7,7 +7,10 @@ import {
   proposeSegments,
   type TimeSegment,
 } from "./engines/duration";
-import { fallbackStructure } from "./engines/structure";
+import { analyzeStructure, fallbackStructure } from "./engines/structure";
+import { duplicateWarnings } from "./engines/cast-edit";
+import { briefCountWarning, formatUserBrief } from "./user-brief";
+import { styleFromUserChoice } from "./visual-styles";
 import {
   attachDialogues,
   fitDialoguesToScenes,
@@ -28,7 +31,6 @@ import { extractJson, parseAnalysis, tryExtractJson } from "./parse";
 import type {
   AnalysisCheckpoint,
   AnalyzeInput,
-  CharacterSheet,
   FrameCapture,
   VideoAnalysis,
 } from "./types";
@@ -204,100 +206,68 @@ function emptyCheckpoint(): AnalysisCheckpoint {
   };
 }
 
-export async function runAnalysisPipeline(
-  data: AnalyzeInput,
-  onProgress?: (progress: AnalysisProgress) => void,
-): Promise<OkErr<{ analysis: VideoAnalysis; incomplete?: boolean; checkpoint?: AnalysisCheckpoint }>> {
-  if (!data) {
-    return fail("Aucune vidéo sélectionnée. Veuillez importer une vidéo avant de lancer l'analyse.");
-  }
+export type PipelinePhase =
+  | "validate"
+  | "structure"
+  | "transcript"
+  | "cast"
+  | "style"
+  | "compact"
+  | "segment"
+  | "narrative"
+  | "done";
 
-  const report = (step: number, extra?: Partial<AnalysisProgress>) => {
-    const progress = progressAt(step, extra);
-    console.info("[PIPELINE]", progress.step, progress.label);
-    onProgress?.(progress);
-  };
+export type PipelineSlice = {
+  nextPhase: PipelinePhase;
+  checkpoint: AnalysisCheckpoint;
+  progress: AnalysisProgress;
+  analysis?: VideoAnalysis;
+  error?: string;
+  done: boolean;
+  awaitingCastReview?: boolean;
+};
 
-  report(1);
-  console.info("[VIDEO VALIDATION] Starting");
-  console.info("[VIDEO VALIDATION] Source exists:", Array.isArray(data.frames) && data.frames.length > 0);
-  console.info("[VIDEO VALIDATION] Source type:", data.kind);
-  console.info("[VIDEO VALIDATION] Metadata loading");
-  const frames = clampFrames(data.frames ?? []);
-  console.info("[VIDEO VALIDATION] Metadata loaded", {
-    duration: data.durationSeconds,
-    frames: frames.length,
-    width: data.width,
-    height: data.height,
-  });
-  console.info("[VIDEO VALIDATION] Duration:", data.durationSeconds);
-  if (!frames.length) {
-    console.error("[VIDEO VALIDATION ERROR]", {
-      exactSubStep: "frames",
-      error: "no usable frames",
-    });
-    return fail("Pas assez d'images extraites de la vidéo. Vérifiez que le fichier n'est pas corrompu.");
-  }
-  console.info("[VIDEO VALIDATION] Validation complete");
-  console.info("[PIPELINE] Moving to step 2");
-
-  report(2);
-  const checkpoint: AnalysisCheckpoint = data.checkpoint
-    ? { ...emptyCheckpoint(), ...data.checkpoint, incomplete: false }
-    : emptyCheckpoint();
-  if (!checkpoint.segments?.length) {
-    const structure = fallbackStructure(
-      data.durationSeconds,
-      frames.map((f) => f.t),
-    );
-    checkpoint.segments = structure.segments;
-  }
-  console.info("[STRUCTURE] State updated", { segments: checkpoint.segments.length });
-  console.info("[PIPELINE] Moving to step 3");
-  report(3);
-
-  let transcript: string | null = checkpoint.transcript ?? null;
-  let transcriptNote = checkpoint.transcriptNote ?? "";
-  try {
-    const transcribed = await collectTranscript(data, checkpoint);
-    transcript = transcribed.text;
-    transcriptNote = transcribed.note;
-    checkpoint.transcript = transcript;
-    checkpoint.transcriptNote = transcriptNote;
-  } catch (err) {
-    console.error("[PIPELINE] transcript skipped", err);
-    transcriptNote = "Transcription indisponible — l'analyse continue.";
-    checkpoint.transcriptNote = transcriptNote;
-  }
-
-  if (isLongForm(data.durationSeconds, frames.length)) {
-    return runLongForm(data, frames, transcript, transcriptNote, checkpoint, report);
-  }
-  return runCompact(data, frames, transcript, transcriptNote, checkpoint, report);
+function markCompleted(checkpoint: AnalysisCheckpoint, step: AnalysisCheckpoint["completed"][number]) {
+  if (!checkpoint.completed.includes(step)) checkpoint.completed = [...checkpoint.completed, step];
 }
 
-async function runCompact(
-  data: AnalyzeInput,
-  frames: FrameCapture[],
-  transcript: string | null,
-  transcriptNote: string,
-  checkpoint: AnalysisCheckpoint,
-  report: (step: number, extra?: Partial<AnalysisProgress>) => void,
-): Promise<OkErr<{ analysis: VideoAnalysis; incomplete?: boolean; checkpoint?: AnalysisCheckpoint }>> {
-  if (!checkpoint.completed.includes("cast")) {
-    report(3, { compact: true });
-    let cast: CastResult;
-    try {
-      cast = await identifyCharacters({
-        frames,
-        kind: data.kind,
-        durationSeconds: data.durationSeconds,
-        width: data.width,
-        height: data.height,
-        userNotes: data.userNotes,
+async function runCastStep(data: AnalyzeInput, frames: FrameCapture[], checkpoint: AnalysisCheckpoint) {
+  const session = data.userNotes ? "notes" : "no-notes";
+  console.info("[PIPELINE] Current checkpoint:", {
+    completed: checkpoint.completed,
+    segments: checkpoint.segments?.length ?? 0,
+    characters: checkpoint.characters?.length ?? 0,
+  });
+  console.info("[PIPELINE] Current step: 3 identification");
+  console.info("[CHARACTERS] STEP START");
+  console.info("[CHARACTERS] Input available:", Boolean(frames.length));
+  console.info("[CHARACTERS] Frames count:", frames.length);
+  console.info("[CHARACTERS] Structure available:", Boolean(checkpoint.segments?.length));
+  console.info("[CHARACTERS] Preparing AI request", { session, kind: data.kind });
+  console.info("[CHARACTERS] AI request START");
+  let cast: CastResult;
+  try {
+    cast = await identifyCharacters({
+      frames,
+      kind: data.kind,
+      durationSeconds: data.durationSeconds,
+      width: data.width,
+      height: data.height,
+      userNotes: [data.userNotes, formatUserBrief(data.userBrief)].filter(Boolean).join("\n"),
+    });
+    console.info("[CHARACTERS] AI response RECEIVED");
+    console.info("[CHARACTERS] Response type:", typeof cast);
+    console.info("[CHARACTERS] Characters detected:", (cast.characters ?? []).map((c) => c.id));
+    console.info("[CHARACTERS] Parsing SUCCESS");
+    console.info("[CHARACTERS] Validation START");
+    if (!Array.isArray(cast.characters)) {
+      console.error("[CHARACTERS ERROR]", {
+        step: 3,
+        subStep: "validation",
+        errorName: "InvalidCast",
+        errorMessage: "characters is not an array",
+        checkpointBefore: checkpoint.completed,
       });
-    } catch (err) {
-      console.error("[CHARACTER PIPELINE ERROR]", err);
       cast = {
         characters: [],
         observedSummary: "",
@@ -305,17 +275,53 @@ async function runCompact(
         language: null,
       };
     }
-    checkpoint.completed = ["cast"];
-    checkpoint.characters = cast.characters;
-    checkpoint.visualStyle = cast.visualStyle;
-    checkpoint.cinematic = cast.cinematic;
-    checkpoint.observedSummary = cast.observedSummary;
-    checkpoint.limitations = cast.limitations;
-    checkpoint.language = cast.language;
+    console.info("[CHARACTERS] Validation SUCCESS");
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    console.error("[CHARACTERS ERROR]", {
+      step: 3,
+      subStep: "identifyCharacters",
+      errorName: error.name,
+      errorMessage: error.message,
+      stack: error.stack,
+      frames: frames.length,
+      checkpointBefore: checkpoint.completed,
+    });
+    cast = {
+      characters: [],
+      observedSummary: "",
+      limitations: [`Identification partielle : ${error.message}. L'analyse continue.`],
+      language: null,
+    };
   }
+  console.info("[CHARACTERS] Persisting checkpoint");
+  markCompleted(checkpoint, "cast");
+  checkpoint.characters = cast.characters;
+  checkpoint.cinematic = cast.cinematic;
+  checkpoint.observedSummary = cast.observedSummary;
+  const countWarning = briefCountWarning(data.userBrief?.expectedCount ?? "", (cast.characters ?? []).length);
+  checkpoint.limitations = [
+    ...(cast.limitations ?? []),
+    ...duplicateWarnings(cast.characters ?? []),
+    ...(countWarning ? [countWarning] : []),
+  ];
+  checkpoint.language = cast.language;
+  console.info("[CHARACTERS] Checkpoint persisted", {
+    characters: checkpoint.characters?.length ?? 0,
+    completed: checkpoint.completed,
+  });
+  console.info("[CHARACTERS] STEP COMPLETE");
+  console.info("[PIPELINE] Moving to step 4");
+}
 
-  report(4, { compact: true });
+async function runCompactStep(
+  data: AnalyzeInput,
+  frames: FrameCapture[],
+  checkpoint: AnalysisCheckpoint,
+): Promise<VideoAnalysis> {
   const known = checkpoint.characters ?? [];
+  const transcript = checkpoint.transcript ?? null;
+  const transcriptNote = checkpoint.transcriptNote ?? "";
   const userContent: ChatContent[] = [
     {
       type: "text",
@@ -325,12 +331,15 @@ async function runCompact(
         height: data.height,
         frameTimes: frames.map((f) => f.t),
         transcript,
-        userNotes: data.userNotes,
+        userNotes: [data.userNotes, formatUserBrief(data.userBrief)].filter(Boolean).join("\n") || undefined,
         kind: data.kind,
       })}
 
 PERSONNAGES DÉJÀ IDENTIFIÉS (réutiliser ces IDs) :
-${known.length ? JSON.stringify(known) : "aucun personnage identifié — continuer sans en inventer"}`,
+${known.length ? JSON.stringify(known) : "aucun personnage identifié — continuer sans en inventer"}
+
+STYLE VISUEL CHOISI PAR L'UTILISATEUR — OBLIGATOIRE, NE PAS REMPLACER :
+${JSON.stringify(checkpoint.visualStyle ?? styleFromUserChoice(data.chosenStyleId, data.chosenStyleText))}`,
     },
     ...images(frames.slice(0, 4)),
   ];
@@ -350,189 +359,141 @@ ${known.length ? JSON.stringify(known) : "aucun personnage identifié — contin
     };
   }
   if (!result || !result.ok) {
-    console.error("[PIPELINE] compact chat failed — synthesizing from checkpoint", result?.error);
-    report(5, { compact: true });
-    report(6, { compact: true });
-    report(7);
     const analysis = analysisFromCheckpoint(checkpoint, data, transcript, transcriptNote);
-    checkpoint.completed = ["cast", "segments", "narrative"];
+    markCompleted(checkpoint, "segments");
+    markCompleted(checkpoint, "narrative");
     checkpoint.incomplete = false;
-    checkpoint.limitations = [
-      ...(checkpoint.limitations ?? []),
-      result?.error || "Analyse visuelle partielle.",
-    ];
-    return { ok: true, analysis, checkpoint };
+    checkpoint.limitations = [...(checkpoint.limitations ?? []), result?.error || "Analyse visuelle partielle."];
+    return analysis;
   }
-
-  report(5, { compact: true });
-  report(6, { compact: true });
   try {
     const parsed = tryExtractJson(result.text);
     if (!parsed || typeof parsed !== "object") throw new Error(INVALID_AI_MESSAGE);
     let analysis = parseAnalysis(parsed);
-    if (!analysis.characters.length && known.length) analysis.characters = known;
-    if (checkpoint.visualStyle && !analysis.visualStyle.lockedStylePhrase) {
-      analysis.visualStyle = checkpoint.visualStyle;
-    }
+    if (known.length) analysis.characters = known;
+    if (checkpoint.visualStyle) analysis.visualStyle = checkpoint.visualStyle;
     if (!analysis.audio.notes) analysis.audio.notes = transcriptNote;
     if (transcript && !analysis.audio.transcriptExcerpt) {
       analysis.audio.transcriptExcerpt = transcript.slice(0, 4000);
       analysis.audio.source = "transcript";
     }
     if (!analysis.observedSummary) {
-      analysis.observedSummary =
-        checkpoint.observedSummary || "Contenu observé à partir des photogrammes.";
+      analysis.observedSummary = checkpoint.observedSummary || "Contenu observé à partir des photogrammes.";
     }
-    report(7);
     analysis = applyDurationFit(analysis, data.durationSeconds, transcript);
-    checkpoint.completed = ["cast", "segments", "narrative"];
+    markCompleted(checkpoint, "segments");
+    markCompleted(checkpoint, "narrative");
     checkpoint.incomplete = false;
-    return { ok: true, analysis, checkpoint };
-  } catch (err) {
+    return analysis;
+  } catch {
     try {
       let analysis = await parseOrRepair(result.text);
-      if (!analysis.characters.length && known.length) analysis.characters = known;
-      report(7);
-      analysis = applyDurationFit(analysis, data.durationSeconds, transcript);
+      if (known.length) analysis.characters = known;
       if (!analysis.audio.notes) analysis.audio.notes = transcriptNote;
-      checkpoint.completed = ["cast", "segments", "narrative"];
-      return { ok: true, analysis, checkpoint };
+      analysis = applyDurationFit(analysis, data.durationSeconds, transcript);
+      markCompleted(checkpoint, "segments");
+      markCompleted(checkpoint, "narrative");
+      return analysis;
     } catch {
-      console.error("[PIPELINE] compact parse failed — synthesizing from checkpoint");
-      report(7);
       const analysis = analysisFromCheckpoint(checkpoint, data, transcript, transcriptNote);
-      checkpoint.completed = ["cast", "segments", "narrative"];
+      markCompleted(checkpoint, "segments");
+      markCompleted(checkpoint, "narrative");
       checkpoint.incomplete = false;
-      return { ok: true, analysis, checkpoint };
+      return analysis;
     }
   }
 }
 
-async function runLongForm(
-  data: AnalyzeInput,
-  frames: FrameCapture[],
-  transcript: string | null,
-  transcriptNote: string,
-  checkpoint: AnalysisCheckpoint,
-  report: (step: number, extra?: Partial<AnalysisProgress>) => void,
-): Promise<OkErr<{ analysis: VideoAnalysis; incomplete?: boolean; checkpoint?: AnalysisCheckpoint }>> {
+async function runOneSegment(data: AnalyzeInput, frames: FrameCapture[], checkpoint: AnalysisCheckpoint) {
   const fruit = fruitHumanoidPromptBlock(data.kind === "fruit-humanoid");
   const angel = angelPromptBlock(data.kind === "angel");
-  const segs: TimeSegment[] =
-    checkpoint.segments?.length
-      ? checkpoint.segments.map((s) => ({
-          index: s.index,
-          start: s.start,
-          end: s.end,
-          frameTimes: s.frameTimes,
-        }))
-      : proposeSegments(
-          data.durationSeconds,
-          frames.map((f) => f.t),
-        );
-
-  let characters: CharacterSheet[] = checkpoint.characters ?? [];
-  let visualStyle = checkpoint.visualStyle;
-  let cinematic = checkpoint.cinematic;
-  let observedSummary = checkpoint.observedSummary ?? "";
-  let limitations = checkpoint.limitations ?? [];
-  let language = checkpoint.language ?? null;
-
-  if (!checkpoint.completed.includes("cast")) {
-    report(3);
-    let cast: CastResult;
-    try {
-      cast = await identifyCharacters({
-        frames,
-        kind: data.kind,
-        durationSeconds: data.durationSeconds,
-        width: data.width,
-        height: data.height,
-        userNotes: data.userNotes,
-      });
-    } catch (err) {
-      console.error("[CHARACTER PIPELINE ERROR]", err);
-      cast = {
-        characters: [],
-        observedSummary: "",
-        limitations: ["Identification partielle — l'analyse continue."],
-        language: null,
-      };
-    }
-    characters = cast.characters ?? [];
-    visualStyle = cast.visualStyle;
-    cinematic = cast.cinematic;
-    observedSummary = cast.observedSummary;
-    limitations = cast.limitations;
-    language = cast.language;
-    checkpoint.completed = ["cast"];
-    checkpoint.characters = characters;
-    checkpoint.visualStyle = visualStyle;
-    checkpoint.cinematic = cinematic;
-    checkpoint.observedSummary = observedSummary;
-    checkpoint.limitations = limitations;
-    checkpoint.language = language;
-    checkpoint.segments = segs.map((s) => ({
+  const segs: TimeSegment[] = (checkpoint.segments ?? []).map((s) => ({
+    index: s.index,
+    start: s.start,
+    end: s.end,
+    frameTimes: s.frameTimes,
+  }));
+  if (!segs.length) {
+    const proposed = proposeSegments(
+      data.durationSeconds,
+      frames.map((f) => f.t),
+    );
+    checkpoint.segments = proposed.map((s) => ({
       index: s.index,
       start: s.start,
       end: s.end,
       frameTimes: s.frameTimes,
     }));
+    segs.push(...proposed);
   }
-
-  report(4);
-  report(5);
   const notes = checkpoint.segmentNotes ?? checkpoint.segments ?? [];
-  const analyzed = Math.max(0, checkpoint.analyzedSegmentCount ?? 0);
-  for (let i = analyzed; i < segs.length; i += 1) {
-    const seg = segs[i]!;
-    report(5, { segmentsDone: i, segmentsTotal: segs.length });
-    const picked = pickFrames(frames, seg.frameTimes, 2);
-    const res = await chat({
-      messages: [
-        {
-          role: "system",
-          content: `Tu décris un SEGMENT déjà découpé. Réutilise les Character ID fournis. ${fruit}${angel}
+  const i = Math.max(0, checkpoint.analyzedSegmentCount ?? 0);
+  const seg = segs[i];
+  if (!seg) {
+    markCompleted(checkpoint, "segments");
+    return;
+  }
+  const characters = checkpoint.characters ?? [];
+  const picked = pickFrames(frames, seg.frameTimes, 2);
+  const res = await chat({
+    messages: [
+      {
+        role: "system",
+        content: `Tu décris un SEGMENT déjà découpé. Réutilise les Character ID fournis. ${fruit}${angel}
 JSON : { "setting":"", "action":"", "emotion":"", "camera":"", "lighting":"", "audio":"", "characters":[], "dialogue": null }`,
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: `Segment ${i + 1}/${segs.length}, ${seg.start.toFixed(1)}s–${seg.end.toFixed(1)}s.
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `Segment ${i + 1}/${segs.length}, ${seg.start.toFixed(1)}s–${seg.end.toFixed(1)}s.
 Personnages : ${characters.map((c) => c.id).join(", ") || "aucun"}
 ${data.userNotes ?? ""}`,
-            },
-            ...images(picked),
-          ],
-        },
-      ],
-      maxTokens: SEGMENT_TOKENS,
-    });
-    const parsed = res.ok ? tryExtractJson(res.text) : null;
-    const rec = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
-    notes[i] = {
-      index: seg.index,
-      start: seg.start,
-      end: seg.end,
-      frameTimes: seg.frameTimes,
-      setting: typeof rec.setting === "string" ? rec.setting : "",
-      action: typeof rec.action === "string" ? rec.action : "",
-      emotion: typeof rec.emotion === "string" ? rec.emotion : "",
-      camera: typeof rec.camera === "string" ? rec.camera : "",
-      lighting: typeof rec.lighting === "string" ? rec.lighting : "",
-      audio: typeof rec.audio === "string" ? rec.audio : "",
-      characters: Array.isArray(rec.characters) ? rec.characters.map(String) : [],
-      dialogue: typeof rec.dialogue === "string" ? rec.dialogue : null,
-      done: true,
-    };
-    checkpoint.segmentNotes = notes;
-    checkpoint.analyzedSegmentCount = i + 1;
-    checkpoint.segments = notes;
-  }
+          },
+          ...images(picked),
+        ],
+      },
+    ],
+    maxTokens: SEGMENT_TOKENS,
+  });
+  const parsed = res.ok ? tryExtractJson(res.text) : null;
+  const rec = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  notes[i] = {
+    index: seg.index,
+    start: seg.start,
+    end: seg.end,
+    frameTimes: seg.frameTimes,
+    setting: typeof rec.setting === "string" ? rec.setting : "",
+    action: typeof rec.action === "string" ? rec.action : "",
+    emotion: typeof rec.emotion === "string" ? rec.emotion : "",
+    camera: typeof rec.camera === "string" ? rec.camera : "",
+    lighting: typeof rec.lighting === "string" ? rec.lighting : "",
+    audio: typeof rec.audio === "string" ? rec.audio : "",
+    characters: Array.isArray(rec.characters) ? rec.characters.map(String) : [],
+    dialogue: typeof rec.dialogue === "string" ? rec.dialogue : null,
+    done: true,
+  };
+  checkpoint.segmentNotes = notes;
+  checkpoint.analyzedSegmentCount = i + 1;
+  checkpoint.segments = notes;
+  if (checkpoint.analyzedSegmentCount >= segs.length) markCompleted(checkpoint, "segments");
+}
 
-  report(6);
+async function runNarrativeStep(
+  data: AnalyzeInput,
+  frames: FrameCapture[],
+  checkpoint: AnalysisCheckpoint,
+): Promise<VideoAnalysis> {
+  const transcript = checkpoint.transcript ?? null;
+  const transcriptNote = checkpoint.transcriptNote ?? "";
+  const characters = checkpoint.characters ?? [];
+  const notes = checkpoint.segmentNotes ?? checkpoint.segments ?? [];
+  const visualStyle = checkpoint.visualStyle;
+  const cinematic = checkpoint.cinematic;
+  const observedSummary = checkpoint.observedSummary ?? "";
+  const limitations = checkpoint.limitations ?? [];
+  const language = checkpoint.language ?? null;
   const scenesBlob = notes
     .map(
       (n, i) =>
@@ -556,17 +517,16 @@ ${buildAnalysisUserPrompt({
 })}
 PERSONNAGES : ${JSON.stringify(characters)}
 SEGMENTS : ${scenesBlob}
-STYLE : ${visualStyle ? JSON.stringify(visualStyle) : "fidèle aux images"}`,
+STYLE VISUEL CHOISI (ne pas remplacer) : ${visualStyle ? JSON.stringify(visualStyle) : "cinéma réaliste"}`,
       },
     ],
     maxTokens: NARRATIVE_TOKENS,
   });
-
   try {
     const raw = narrative.ok ? tryExtractJson(narrative.text) : null;
     let analysis = raw ? parseAnalysis(raw) : parseAnalysis({});
-    if (!analysis.characters.length) analysis.characters = characters;
-    if (visualStyle && !analysis.visualStyle.lockedStylePhrase) analysis.visualStyle = visualStyle;
+    if (characters.length) analysis.characters = characters;
+    if (visualStyle) analysis.visualStyle = visualStyle;
     if (cinematic && !analysis.cinematic.dominantShots.length) analysis.cinematic = cinematic;
     if (!analysis.observedSummary) analysis.observedSummary = observedSummary;
     analysis.limitations = [...new Set([...(analysis.limitations ?? []), ...limitations])];
@@ -576,17 +536,186 @@ STYLE : ${visualStyle ? JSON.stringify(visualStyle) : "fidèle aux images"}`,
       analysis.audio.transcriptExcerpt = transcript.slice(0, 4000);
       analysis.audio.source = "transcript";
     }
-    report(7);
     analysis = applyDurationFit(analysis, data.durationSeconds, transcript);
-    checkpoint.completed = ["cast", "segments", "narrative"];
+    markCompleted(checkpoint, "narrative");
     checkpoint.incomplete = false;
-    return { ok: true, analysis, checkpoint };
+    return analysis;
   } catch (err) {
     console.error("[PIPELINE] long-form narrative failed — synthesizing from checkpoint", err);
-    report(7);
     const analysis = analysisFromCheckpoint(checkpoint, data, transcript, transcriptNote);
-    checkpoint.completed = ["cast", "segments", "narrative"];
+    markCompleted(checkpoint, "narrative");
     checkpoint.incomplete = false;
-    return { ok: true, analysis, checkpoint };
+    return analysis;
   }
+}
+
+export async function runPipelineSlice(args: {
+  data: AnalyzeInput;
+  checkpoint?: AnalysisCheckpoint;
+  phase: PipelinePhase;
+}): Promise<PipelineSlice> {
+  const data = args.data;
+  const checkpoint: AnalysisCheckpoint = args.checkpoint
+    ? { ...emptyCheckpoint(), ...args.checkpoint, incomplete: false }
+    : emptyCheckpoint();
+  const frames = clampFrames(data.frames ?? []);
+  const longForm = isLongForm(data.durationSeconds, frames.length);
+
+  const finish = (
+    nextPhase: PipelinePhase,
+    step: number,
+    extra?: Partial<AnalysisProgress> & {
+      analysis?: VideoAnalysis;
+      error?: string;
+      done?: boolean;
+      awaitingCastReview?: boolean;
+    },
+  ): PipelineSlice => ({
+    nextPhase,
+    checkpoint,
+    progress: progressAt(step, {
+      compact: extra?.compact,
+      segmentsDone: extra?.segmentsDone,
+      segmentsTotal: extra?.segmentsTotal,
+    }),
+    analysis: extra?.analysis,
+    error: extra?.error,
+    done: Boolean(extra?.done),
+    awaitingCastReview: extra?.awaitingCastReview,
+  });
+
+  switch (args.phase) {
+    case "validate": {
+      console.info("[VIDEO VALIDATION] Starting");
+      if (data.userBrief) checkpoint.userBrief = data.userBrief;
+      if (!frames.length) {
+        return finish("done", 1, {
+          error: "Pas assez d'images extraites de la vidéo. Vérifiez que le fichier n'est pas corrompu.",
+          done: true,
+        });
+      }
+      console.info("[VIDEO VALIDATION] Validation complete", { frames: frames.length });
+      return finish("structure", 1);
+    }
+    case "structure": {
+      console.info("[STRUCTURE] Starting analysis");
+      if (!checkpoint.completed.includes("structure")) {
+        try {
+          const structure = await analyzeStructure({
+            durationSeconds: data.durationSeconds,
+            frameTimes: frames.map((f) => f.t),
+            width: data.width,
+            height: data.height,
+          });
+          checkpoint.segments = structure.segments;
+          if (structure.structureStatus === "fallback") {
+            checkpoint.limitations = [
+              ...(checkpoint.limitations ?? []),
+              "Structure simplifiée à partir de la durée source.",
+            ];
+          }
+        } catch (err) {
+          console.error("[STRUCTURE ERROR]", err);
+          const structure = fallbackStructure(
+            data.durationSeconds,
+            frames.map((f) => f.t),
+          );
+          checkpoint.segments = structure.segments;
+        }
+        markCompleted(checkpoint, "structure");
+      }
+      console.info("[STRUCTURE] Moving to step 3", { segments: checkpoint.segments?.length ?? 0 });
+      return finish("transcript", 2);
+    }
+    case "transcript": {
+      if (!checkpoint.transcript && !checkpoint.transcriptNote) {
+        try {
+          const transcribed = await collectTranscript(data, checkpoint);
+          checkpoint.transcript = transcribed.text;
+          checkpoint.transcriptNote = transcribed.note;
+        } catch (err) {
+          console.error("[PIPELINE] transcript skipped", err);
+          checkpoint.transcriptNote = "Transcription indisponible — l'analyse continue.";
+        }
+      }
+      console.info("[PIPELINE] Moving to step 3");
+      return finish("cast", 3);
+    }
+    case "cast": {
+      if (!checkpoint.completed.includes("cast")) {
+        await runCastStep(data, frames, checkpoint);
+      }
+      return finish("style", 4);
+    }
+    case "style": {
+      checkpoint.visualStyle = styleFromUserChoice(data.chosenStyleId, data.chosenStyleText);
+      console.info("[STYLE] Applied user choice", {
+        id: data.chosenStyleId,
+        phrase: checkpoint.visualStyle.lockedStylePhrase,
+      });
+      if (!checkpoint.castValidated) {
+        console.info("[CHARACTERS] Awaiting user validation", {
+          count: checkpoint.characters?.length ?? 0,
+        });
+        return finish(longForm ? "segment" : "compact", 3, { awaitingCastReview: true, done: true });
+      }
+      return finish(longForm ? "segment" : "compact", 4, { compact: !longForm });
+    }
+    case "compact": {
+      console.info("[PIPELINE] compact START (scènes + narration)");
+      if (!checkpoint.visualStyle?.lockedStylePhrase) {
+        checkpoint.visualStyle = styleFromUserChoice(data.chosenStyleId, data.chosenStyleText);
+      }
+      const analysis = await runCompactStep(data, frames, checkpoint);
+      console.info("[PIPELINE] compact COMPLETE");
+      return finish("done", 7, { compact: true, analysis, done: true });
+    }
+    case "segment": {
+      await runOneSegment(data, frames, checkpoint);
+      const total = checkpoint.segments?.length ?? 1;
+      const doneCount = checkpoint.analyzedSegmentCount ?? 0;
+      if (checkpoint.completed.includes("segments")) {
+        return finish("narrative", 6, { segmentsDone: doneCount, segmentsTotal: total });
+      }
+      return finish("segment", 5, { segmentsDone: doneCount, segmentsTotal: total });
+    }
+    case "narrative": {
+      const analysis = await runNarrativeStep(data, frames, checkpoint);
+      return finish("done", 7, { analysis, done: true });
+    }
+    default:
+      return finish("done", 7, { done: true, error: NETWORK_MESSAGE });
+  }
+}
+
+export async function runAnalysisPipeline(
+  data: AnalyzeInput,
+  onProgress?: (progress: AnalysisProgress) => void,
+): Promise<OkErr<{ analysis: VideoAnalysis; incomplete?: boolean; checkpoint?: AnalysisCheckpoint }>> {
+  if (!data) {
+    return fail("Aucune vidéo sélectionnée. Veuillez importer une vidéo avant de lancer l'analyse.");
+  }
+  let phase: PipelinePhase = "validate";
+  let checkpoint: AnalysisCheckpoint = data.checkpoint
+    ? { ...emptyCheckpoint(), ...data.checkpoint, incomplete: false }
+    : emptyCheckpoint();
+  const frames = clampFrames(data.frames ?? []);
+  const payload: AnalyzeInput = { ...data, frames };
+
+  while (phase !== "done") {
+    const slice = await runPipelineSlice({ data: payload, checkpoint, phase });
+    checkpoint = slice.checkpoint;
+    onProgress?.(slice.progress);
+    if (slice.done && slice.analysis) {
+      return { ok: true, analysis: slice.analysis, checkpoint };
+    }
+    if (slice.done && slice.error) {
+      return { ok: false, error: slice.error, checkpoint, incomplete: true };
+    }
+    if (slice.nextPhase === phase && phase !== "segment") {
+      return fail(slice.error || NETWORK_MESSAGE);
+    }
+    phase = slice.nextPhase;
+  }
+  return fail(NETWORK_MESSAGE);
 }

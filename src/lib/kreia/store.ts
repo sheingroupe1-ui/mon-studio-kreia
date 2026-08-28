@@ -16,6 +16,7 @@ import type {
   VideoAnalysis,
   VideoMeta,
 } from "./types";
+import type { UserBrief } from "./user-brief";
 
 type KreiaState = {
   hydrated: boolean;
@@ -30,6 +31,7 @@ type KreiaState = {
     frames: FrameCapture[];
     thumbnailDataUrl?: string;
     userNotes: string;
+    userBrief?: UserBrief;
   }) => Promise<KreiaProject>;
   patchCurrent: (patch: Partial<KreiaProject>) => Promise<void>;
   setAnalysis: (analysis: VideoAnalysis) => Promise<void>;
@@ -57,7 +59,7 @@ export const useKreia = create<KreiaState>((set, get) => ({
     return project;
   },
 
-  createDraft: async ({ kind, mode, video, frames, thumbnailDataUrl, userNotes }) => {
+  createDraft: async ({ kind, mode, video, frames, thumbnailDataUrl, userNotes, userBrief }) => {
     const now = new Date().toISOString();
     const project: KreiaProject = {
       id: createId("prj"),
@@ -72,6 +74,7 @@ export const useKreia = create<KreiaState>((set, get) => ({
       frames,
       analysisEdits: [],
       userNotes,
+      userBrief,
     };
     await saveProject(project);
     set({

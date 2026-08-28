@@ -15,7 +15,7 @@ export const Route = createRootRoute({
       {
         name: "description",
         content:
-          "De la vidéo de référence au plan de production : analyse narrative, style visuel, personnages et prompts de scènes.",
+          "Studio de reconstruction vidéo. Analysez une référence, identifiez les personnages et générez les prompts de scènes.",
       },
       { name: "theme-color", content: "#0B0D10" },
       { name: "apple-mobile-web-app-title", content: "Mon studio KREIA" },

@@ -100,8 +100,8 @@ export async function chat(args: {
     console.error("[kreia:chat] fetch failed", err);
     return fail(
       aborted
-        ? "L'analyse a dépassé le délai imparti. Réessayez avec une vidéo plus courte."
-        : NETWORK_MESSAGE,
+        ? `Timeout IA après ${hasImages ? Math.max(timeoutMs, 120_000) : timeoutMs} ms (vision=${hasImages}).`
+        : `Réseau IA: ${err instanceof Error ? err.message : NETWORK_MESSAGE}`,
     );
   }
 

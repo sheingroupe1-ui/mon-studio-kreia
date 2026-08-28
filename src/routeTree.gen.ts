@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as IdeaRouteImport } from './routes/idea'
 import { Route as NewRouteImport } from './routes/new'
 import { Route as ProjectsRouteImport } from './routes/projects'
 import { Route as KreiaJobsRouteImport } from './routes/kreia.jobs'
@@ -19,6 +20,11 @@ import { Route as ProjectsIdRouteImport } from './routes/projects.$id'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IdeaRoute = IdeaRouteImport.update({
+  id: '/idea',
+  path: '/idea',
   getParentRoute: () => rootRouteImport,
 } as any)
 const NewRoute = NewRouteImport.update({
@@ -49,6 +55,7 @@ const ProjectsIdRoute = ProjectsIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/idea': typeof IdeaRoute
   '/new': typeof NewRoute
   '/projects': typeof ProjectsRouteWithChildren
   '/kreia/jobs': typeof KreiaJobsRoute
@@ -57,6 +64,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/idea': typeof IdeaRoute
   '/new': typeof NewRoute
   '/kreia/jobs': typeof KreiaJobsRoute
   '/projects/$id': typeof ProjectsIdRoute
@@ -65,6 +73,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/idea': typeof IdeaRoute
   '/new': typeof NewRoute
   '/projects': typeof ProjectsRouteWithChildren
   '/kreia/jobs': typeof KreiaJobsRoute
@@ -74,12 +83,19 @@ export interface FileRoutesById {
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/new' | '/projects' | '/kreia/jobs' | '/projects/$id' | '/projects/'
+    | '/'
+    | '/idea'
+    | '/new'
+    | '/projects'
+    | '/kreia/jobs'
+    | '/projects/$id'
+    | '/projects/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/new' | '/kreia/jobs' | '/projects/$id' | '/projects'
+  to: '/' | '/idea' | '/new' | '/kreia/jobs' | '/projects/$id' | '/projects'
   id:
     | '__root__'
     | '/'
+    | '/idea'
     | '/new'
     | '/projects'
     | '/kreia/jobs'
@@ -89,6 +105,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  IdeaRoute: typeof IdeaRoute
   NewRoute: typeof NewRoute
   ProjectsRoute: typeof ProjectsRouteWithChildren
   KreiaJobsRoute: typeof KreiaJobsRoute
@@ -101,6 +118,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/idea': {
+      id: '/idea'
+      path: '/idea'
+      fullPath: '/idea'
+      preLoaderRoute: typeof IdeaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/new': {
@@ -157,6 +181,7 @@ const ProjectsRouteWithChildren = ProjectsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  IdeaRoute: IdeaRoute,
   NewRoute: NewRoute,
   ProjectsRoute: ProjectsRouteWithChildren,
   KreiaJobsRoute: KreiaJobsRoute,

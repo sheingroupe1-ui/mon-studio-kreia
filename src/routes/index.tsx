@@ -70,7 +70,13 @@ function Home() {
               <div className="mt-8 flex flex-wrap gap-3">
                 <Button asChild size="lg">
                   <Link to="/new">
-                    Nouveau projet
+                    Reconstruire une vidéo
+                    <ArrowRight className="size-4" />
+                  </Link>
+                </Button>
+                <Button asChild variant="outline" size="lg">
+                  <Link to="/idea">
+                    Partir d'une idée
                     <ArrowRight className="size-4" />
                   </Link>
                 </Button>

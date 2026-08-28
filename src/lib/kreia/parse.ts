@@ -205,6 +205,7 @@ export function parseCharacter(raw: unknown, index: number, kind?: ProjectKind):
     lockedTraits: strArr(o.lockedTraits ?? o.physicalFeatures),
     notes: str(o.notes),
     dialogueColor: strOrNull(o.dialogueColor) ?? undefined,
+    userLocked: Boolean(o.userLocked),
   };
 }
 

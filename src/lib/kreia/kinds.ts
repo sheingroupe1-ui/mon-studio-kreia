@@ -19,7 +19,7 @@ export const KIND_REGISTRY: KindDefinition[] = [
     rules: [
       "Anatomie humaine cohérente, sans membres surnuméraires",
       "Visages et morphologies verrouillés par Character ID",
-      "Le style visuel détecté reste une contrainte de production",
+      "Le style visuel choisi par l'utilisateur reste une contrainte de production",
     ],
   },
   {
@@ -31,7 +31,7 @@ export const KIND_REGISTRY: KindDefinition[] = [
     rules: [
       "Aucun humain, même en arrière-plan",
       "Espèce fruit, visage et vêtements verrouillés",
-      "Conservation stricte du style visuel détecté",
+      "Conservation stricte du style visuel choisi",
     ],
   },
   {

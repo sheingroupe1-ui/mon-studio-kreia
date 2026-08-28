@@ -2,12 +2,13 @@ import { progressAt, type AnalysisProgress } from "./analysis-stages";
 import { extractAudioChunks } from "./audio";
 import { capturePlan, extractFrames, loadVideoElement, toAnalysisFrames } from "./frames";
 import { isPostTransportError, runKreiaJob } from "./job-client";
-import { failMessage, fitAnalyzePayload, logKreia, logKreiaError } from "./rpc";
-import { fallbackStructure } from "./engines/structure";
+import { fitAnalyzePayload, logKreia, logKreiaError } from "./rpc";
 import { createId } from "./ids";
+import { formatUserBrief, type UserBrief } from "./user-brief";
 import type {
   AnalysisCheckpoint,
   AudioChunk,
+  CharacterSheet,
   FrameCapture,
   ProjectKind,
   ReconstructionMode,
@@ -22,6 +23,9 @@ export type AnalysisRunInput = {
   kind: ProjectKind;
   mode: ReconstructionMode;
   notes: string;
+  brief?: UserBrief;
+  chosenStyleId?: string;
+  chosenStyleText?: string;
   resume?: boolean;
   checkpoint?: AnalysisCheckpoint | null;
   onProgress: (progress: AnalysisProgress) => void;
@@ -33,12 +37,20 @@ export type AnalysisRunInput = {
     frames: FrameCapture[];
     thumbnailDataUrl?: string;
     userNotes: string;
+    userBrief?: UserBrief;
   }) => Promise<{ id: string }>;
   currentProjectId?: string | null;
 };
 
 export type AnalysisRunResult =
   | { ok: true; analysis: VideoAnalysis; projectId: string }
+  | {
+      ok: true;
+      awaitingCastReview: true;
+      projectId: string;
+      checkpoint: AnalysisCheckpoint;
+      characters: CharacterSheet[];
+    }
   | {
       ok: false;
       error: string;
@@ -129,31 +141,21 @@ export async function runFullVideoAnalysis(input: AnalysisRunInput): Promise<Ana
       return { ok: false, error: "Pas assez d'images exploitables dans cette vidéo." };
     }
     console.info("[VIDEO VALIDATION] Validation complete");
-    console.info("[PIPELINE] Moving to step 2");
 
-    report(2);
     const checkpoint: AnalysisCheckpoint =
       input.resume && input.checkpoint
-        ? { ...emptyCheckpoint(), ...input.checkpoint, incomplete: false }
-        : emptyCheckpoint();
-    if (!checkpoint.segments?.length) {
-      const structure = fallbackStructure(
-        input.meta.durationSeconds,
-        extracted.map((f) => f.t),
-      );
-      checkpoint.segments = structure.segments;
-      logKreia("analyze:structure", {
-        session,
-        status: structure.structureStatus,
-        segments: structure.segments.length,
-      });
-    }
-    console.info("[PIPELINE] Moving to step 3");
-    report(3);
+        ? {
+            ...emptyCheckpoint(),
+            ...input.checkpoint,
+            incomplete: false,
+            userBrief: input.brief ?? input.checkpoint.userBrief,
+          }
+        : { ...emptyCheckpoint(), userBrief: input.brief };
 
+    const formattedNotes = [formatUserBrief(input.brief), input.notes].filter(Boolean).join("\n");
     const planned = capturePlan(input.meta.durationSeconds);
     const analysisFrames = await toAnalysisFrames(extracted, {
-      maxFrames: Math.min(4, planned.analysis),
+      maxFrames: Math.min(6, Math.max(planned.analysis, 4)),
     });
     let audioChunks: AudioChunk[] = [];
     if (input.file && !(input.resume && checkpoint.transcript)) {
@@ -173,14 +175,21 @@ export async function runFullVideoAnalysis(input: AnalysisRunInput): Promise<Ana
         video: input.meta,
         frames: extracted,
         thumbnailDataUrl: extracted[0]?.dataUrl,
-        userNotes: input.notes,
+        userNotes: formattedNotes,
+        userBrief: input.brief,
       });
       projectId = project.id;
     }
 
     const send = (frames: FrameCapture[], chunks: AudioChunk[]) => {
       const fitted = fitAnalyzePayload({ frames, audioWavBase64: null });
-      return runKreiaJob<{ ok: true; analysis: VideoAnalysis }>(
+      return runKreiaJob<{
+        ok: true;
+        analysis?: VideoAnalysis;
+        awaitingCastReview?: boolean;
+        checkpoint?: AnalysisCheckpoint;
+        characters?: CharacterSheet[];
+      }>(
         "analyze",
         {
           frames: fitted.frames,
@@ -189,12 +198,14 @@ export async function runFullVideoAnalysis(input: AnalysisRunInput): Promise<Ana
           width: input.meta.width,
           height: input.meta.height,
           kind: input.kind,
-          userNotes: input.notes,
+          userNotes: formattedNotes,
+          userBrief: input.brief,
+          chosenStyleId: input.chosenStyleId,
+          chosenStyleText: input.chosenStyleText,
           checkpoint,
         },
         (p) => {
           if (activeSession !== session) return;
-          if (p.step < 3) return;
           input.onProgress(p);
         },
       );
@@ -221,20 +232,25 @@ export async function runFullVideoAnalysis(input: AnalysisRunInput): Promise<Ana
     if (!result.ok) {
       return {
         ok: false,
-        error: failMessage(
-          result,
-          result.incomplete
-            ? "Analyse incomplète."
-            : "L'analyse n'a pas pu être terminée. La réponse reçue est invalide. Veuillez réessayer.",
-        ),
+        error: result.error || "Échec d'analyse (sans message).",
         checkpoint: result.checkpoint,
         incomplete: result.incomplete,
+      };
+    }
+    if (result.awaitingCastReview) {
+      return {
+        ok: true,
+        awaitingCastReview: true,
+        projectId,
+        checkpoint: result.checkpoint ?? checkpoint ?? emptyCheckpoint(),
+        characters: result.characters ?? result.checkpoint?.characters ?? [],
       };
     }
     if (!result.analysis) {
       return {
         ok: false,
         error: "L'analyse n'a pas pu être terminée. La réponse reçue est invalide. Veuillez réessayer.",
+        checkpoint: result.checkpoint,
       };
     }
     return { ok: true, analysis: result.analysis, projectId };
