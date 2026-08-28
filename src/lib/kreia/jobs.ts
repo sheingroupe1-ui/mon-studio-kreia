@@ -238,6 +238,12 @@ async function runAnalyzeSlice(job: JobRecord): Promise<void> {
   const base =
     job.payload && typeof job.payload === "object" ? { ...(job.payload as Record<string, unknown>) } : {};
   const data = { ...base, frames: job.frames, audioChunks: job.audioChunks } as AnalyzeInput;
+  const inferred = Number(data.durationSeconds) || 0;
+  const frameCount = job.frames.length;
+  const longForm = inferred > 10;
+  console.info(
+    `[PIPELINE] duration=${data.durationSeconds} frames=${frameCount} isLongForm=${longForm}`,
+  );
   const phase: PipelinePhase = isPhase(job.phase) ? job.phase : "validate";
   job.progress = progressForPhase(phase);
   job.debug = `phase=${phase} frames=${job.frames.length} step=${job.progress.step}`;

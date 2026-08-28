@@ -17,6 +17,7 @@ import type {
   VideoMeta,
 } from "./types";
 import type { UserBrief } from "./user-brief";
+import { durationFromProject, splitAnalysis, splitProduction } from "./engines/split-plan";
 
 type KreiaState = {
   hydrated: boolean;
@@ -44,6 +45,21 @@ function titleFrom(meta: VideoMeta): string {
   return base || "Projet sans titre";
 }
 
+function applySplit(current: KreiaProject, patch: Partial<KreiaProject>): Partial<KreiaProject> {
+  const duration = durationFromProject({
+    durationSeconds: patch.video?.durationSeconds ?? current.video.durationSeconds,
+    frameTimes: (patch.frames ?? current.frames).map((frame) => frame.t),
+    analysis: patch.analysis ?? current.analysis,
+  });
+  const next = { ...patch };
+  if (patch.analysis) next.analysis = splitAnalysis(patch.analysis, duration);
+  if (patch.production) {
+    const analysis = next.analysis ?? current.analysis;
+    if (analysis) next.production = splitProduction(patch.production, analysis, duration);
+  }
+  return next;
+}
+
 export const useKreia = create<KreiaState>((set, get) => ({
   hydrated: false,
   index: [],
@@ -55,6 +71,30 @@ export const useKreia = create<KreiaState>((set, get) => ({
 
   open: async (id) => {
     const project = await loadProject(id);
+    if (!project) {
+      set({ current: null });
+      return null;
+    }
+    if (project.analysis) {
+      const duration = durationFromProject({
+        durationSeconds: project.video.durationSeconds,
+        frameTimes: project.frames.map((frame) => frame.t),
+        analysis: project.analysis,
+      });
+      const analysis = splitAnalysis(project.analysis, duration);
+      const production = project.production
+        ? splitProduction(project.production, analysis, duration)
+        : project.production;
+      const next = { ...project, analysis, production };
+      if (
+        analysis.scenes.length !== project.analysis.scenes.length ||
+        (production && production.scenes.length !== project.production?.scenes.length)
+      ) {
+        await saveProject(next);
+      }
+      set({ current: next });
+      return next;
+    }
     set({ current: project });
     return project;
   },
@@ -87,9 +127,10 @@ export const useKreia = create<KreiaState>((set, get) => ({
   patchCurrent: async (patch) => {
     const current = get().current;
     if (!current) return;
+    const split = applySplit(current, patch);
     const next: KreiaProject = {
       ...current,
-      ...patch,
+      ...split,
       updatedAt: new Date().toISOString(),
     };
     await saveProject(next);

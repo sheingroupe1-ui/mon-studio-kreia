@@ -1,5 +1,5 @@
-import { identityParagraph, styleWeave } from "./identity";
-import type { CharacterSheet, VideoAnalysis } from "../types";
+import { identityParagraph, styleWeave } from "./identity.ts";
+import type { CharacterSheet, VideoAnalysis } from "../types.ts";
 
 export function characterLockLine(c: CharacterSheet): string {
   return identityParagraph(c);

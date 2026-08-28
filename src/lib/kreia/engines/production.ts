@@ -1,5 +1,6 @@
-import { collapseProductionScenes } from "./duration";
-import { enforceProductionDialogues, formatLockedDialogue } from "./dialogues";
+import { collapseAnalysisScenes, expectedSceneCount, inferSourceDuration, packDurations } from "./duration";
+import { enforceProductionDialogues, fitDialoguesToScenes, formatLockedDialogue, linesForScene } from "./dialogues";
+import { validateIsolatedProduction } from "./guards";
 import { composeCharacterImagePrompt, enforceProductionIdentity, identityParagraph } from "./identity";
 import { expandCharacterIds } from "./continuity";
 import { chat, fail, NETWORK_MESSAGE, type OkErr } from "../llm";
@@ -35,9 +36,7 @@ function localCharacters(analysis: VideoAnalysis): ProductionPlan["characters"] 
 function fallbackScene(analysis: VideoAnalysis, index: number): SceneProduction {
   const scene = analysis.scenes[index];
   const n = scene?.number ?? index + 1;
-  const locked = formatLockedDialogue(
-    (analysis.dialogues?.lines ?? []).filter((l) => l.sceneNumber === n),
-  );
+  const locked = formatLockedDialogue(linesForScene(analysis.dialogues?.lines ?? [], n));
   const who = scene ? expandCharacterIds(scene.characters, analysis.characters) : "";
   const style = analysis.visualStyle.lockedStylePhrase;
   const spoken = locked
@@ -89,24 +88,45 @@ function emptyPlan(analysis: VideoAnalysis): ProductionPlan {
 function sceneUserPrompt(input: GenerateInput, index: number, first: boolean): string {
   const { analysis, mode, durationSeconds, userNotes } = input;
   const scene = analysis.scenes[index];
-  const locked = formatLockedDialogue(
-    (analysis.dialogues?.lines ?? []).filter((l) => l.sceneNumber === (scene?.number ?? index + 1)),
-  );
-  const who = scene ? expandCharacterIds(scene.characters, analysis.characters) : "";
-  const chars = analysis.characters.map((c) => identityParagraph(c)).join("\n");
+  const sceneNo = scene?.number ?? index + 1;
+  const owned = linesForScene(analysis.dialogues?.lines ?? [], sceneNo);
+  const locked = formatLockedDialogue(owned);
+  const presentIds = [
+    ...new Set([...(scene?.characters ?? []), ...owned.map((l) => l.speakerId).filter(Boolean)]),
+  ] as string[];
+  const who = scene ? expandCharacterIds(presentIds.length ? presentIds : scene.characters, analysis.characters) : "";
+  const chars = analysis.characters
+    .filter((c) => !presentIds.length || presentIds.includes(c.id))
+    .map((c) => identityParagraph(c))
+    .join("\n");
+  const scenePayload = scene
+    ? {
+        number: scene.number,
+        estimatedDuration: scene.estimatedDuration,
+        startHint: scene.startHint,
+        setting: scene.setting,
+        action: scene.action,
+        emotion: scene.emotion,
+        camera: scene.camera,
+        lighting: scene.lighting,
+        audio: scene.audio,
+        characters: presentIds,
+        dialogue: locked,
+      }
+    : { number: sceneNo };
   return `Mode : ${mode}. Durée source ${durationSeconds.toFixed(1)}s.
 ${userNotes ? `Notes : ${userNotes}` : ""}
 Génère UNIQUEMENT la scène ${index + 1}/${analysis.scenes.length} (pas les autres).
 ${first ? "Inclus aussi hook, scenario, characters (fiches), visualStyle." : "Ne régénère pas hook/characters — uniquement la scène."}
 
-PERSONNAGES
+PERSONNAGES PRÉSENTS DANS CETTE SCÈNE
 ${chars || "(aucun)"}
 
-SCÈNE ANALYSÉE
-${JSON.stringify(scene ?? { number: index + 1 }, null, 2)}
+SCÈNE ANALYSÉE (fenêtre locale uniquement)
+${JSON.stringify(scenePayload, null, 2)}
 Personnages présents :
 ${who}
-DIALOGUE VERROUILLÉ : ${locked ?? "aucun — ne pas inventer"}
+DIALOGUES DE CETTE SCÈNE UNIQUEMENT — interdiction d'ajouter une réplique d'une autre scène : ${locked ?? "aucun — ne pas inventer"}
 STYLE : ${analysis.visualStyle.lockedStylePhrase}
 
 JSON :
@@ -163,6 +183,7 @@ export async function runOneProductionScene(
   }
   if (!parsedScene) parsedScene = fallbackScene(analysis, index);
   parsedScene.number = analysis.scenes[index]?.number ?? index + 1;
+  if (parsedScene.duration > 10) parsedScene.duration = 10;
   const scenes = plan.scenes.filter((s) => s.number !== parsedScene!.number);
   scenes.push(parsedScene);
   scenes.sort((a, b) => a.number - b.number);
@@ -170,8 +191,33 @@ export async function runOneProductionScene(
   return { ok: true, plan };
 }
 
+function sourceDuration(input: GenerateInput): number {
+  const lastDialogue = Math.max(
+    0,
+    ...(input.analysis.dialogues?.lines ?? []).map((l) => Number(l.endTime ?? l.startTime ?? 0)),
+  );
+  const lastHint = (input.analysis.scenes ?? [])
+    .map((s) => s.startHint)
+    .join(" ");
+  const hintTimes = [...lastHint.matchAll(/(\d{1,2}):(\d{2})/g)].map((m) => Number(m[1]) * 60 + Number(m[2]));
+  return inferSourceDuration(input.durationSeconds, {
+    lastDialogueTime: lastDialogue,
+    segmentEnds: hintTimes,
+  });
+}
+
 export async function runProductionSlice(input: GenerateInput): Promise<ProductionSliceResult> {
-  const analysis = input.analysis;
+  const duration = Math.max(input.durationSeconds || 0, sourceDuration(input));
+  const expected = expectedSceneCount(duration);
+  const fittedInput = { ...input, durationSeconds: duration };
+  let analysis = input.analysis;
+  const before = analysis.scenes?.length ?? 0;
+  analysis = {
+    ...analysis,
+    scenes: collapseAnalysisScenes(analysis.scenes ?? [], duration),
+    sceneCountEstimate: expected,
+  };
+  analysis = fitDialoguesToScenes(analysis, before, duration);
   const checkpoint: AnalysisCheckpoint = {
     version: 1,
     completed: input.checkpoint?.completed ?? [],
@@ -186,10 +232,10 @@ export async function runProductionSlice(input: GenerateInput): Promise<Producti
     characters: input.checkpoint?.characters ?? analysis.characters,
     visualStyle: input.checkpoint?.visualStyle ?? analysis.visualStyle,
   };
-  const total = Math.max(1, analysis.scenes.length);
+  const total = expected;
   const index = Math.max(0, checkpoint.analyzedProductionSceneCount ?? 0);
   if (index >= total) {
-    const production = sealPlan(checkpoint.production ?? emptyPlan(analysis), analysis, input);
+    const production = sealPlan(checkpoint.production ?? emptyPlan(analysis), analysis, fittedInput);
     return {
       checkpoint: { ...checkpoint, production, analyzedProductionSceneCount: total },
       done: true,
@@ -198,7 +244,7 @@ export async function runProductionSlice(input: GenerateInput): Promise<Producti
     };
   }
 
-  const out = await runOneProductionScene(input, checkpoint, index);
+  const out = await runOneProductionScene({ ...fittedInput, analysis }, checkpoint, index);
   if (!out.ok) {
     return {
       checkpoint,
@@ -211,7 +257,7 @@ export async function runProductionSlice(input: GenerateInput): Promise<Producti
   checkpoint.analyzedProductionSceneCount = index + 1;
   const done = checkpoint.analyzedProductionSceneCount >= total;
   if (done) {
-    checkpoint.production = sealPlan(out.plan, analysis, input);
+    checkpoint.production = sealPlan(out.plan, analysis, fittedInput);
     if (!checkpoint.completed.includes("produce")) {
       checkpoint.completed = [...checkpoint.completed, "produce"];
     }
@@ -228,13 +274,38 @@ export async function runProductionSlice(input: GenerateInput): Promise<Producti
 }
 
 function sealPlan(plan: ProductionPlan, analysis: VideoAnalysis, input: GenerateInput): ProductionPlan {
-  let production = plan;
-  production.scenes = collapseProductionScenes(production.scenes, input.durationSeconds);
+  const duration = sourceDuration(input);
+  const expected = expectedSceneCount(duration);
+  const durations = packDurations(duration);
+  const scenes = Array.from({ length: expected }, (_, i) => {
+    const existing = plan.scenes.find((s) => s.number === i + 1) ?? plan.scenes[i];
+    const built = fallbackScene(analysis, i);
+    return {
+      ...built,
+      location: existing?.location || built.location,
+      action: existing?.action || built.action,
+      emotion: existing?.emotion || built.emotion,
+      camera: existing?.camera || built.camera,
+      lighting: existing?.lighting || built.lighting,
+      visualStyle: existing?.visualStyle || built.visualStyle,
+      audio: existing?.audio || built.audio,
+      number: i + 1,
+      duration: durations[i] ?? 10,
+      dialogue: built.dialogue,
+      videoPrompt: built.videoPrompt,
+    };
+  });
+  let production = { ...plan, scenes };
   const first = production.scenes[0];
   if (first) production.hook.duration = first.duration;
   production = enforceProductionIdentity(
     enforceProductionDialogues(production, analysis, input.mode, input.kind),
     analysis,
   );
+  const isolated = validateIsolatedProduction(analysis, production, duration);
+  if (isolated) {
+    console.error("[GUARDS]", isolated);
+    production = enforceProductionDialogues(production, analysis, input.mode, input.kind);
+  }
   return production;
 }

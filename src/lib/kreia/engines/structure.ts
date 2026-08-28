@@ -145,47 +145,8 @@ export async function analyzeStructure(args: {
   const duration = Number(args.durationSeconds);
   const times = Array.isArray(args.frameTimes) ? args.frameTimes.filter((t) => Number.isFinite(t)) : [];
   logStructure("Starting analysis");
-  logStructure(`Video source available: ${Number.isFinite(duration) && duration > 0}`);
   logStructure(`Duration: ${Number.isFinite(duration) ? duration.toFixed(1) : "invalid"} seconds`);
-  logStructure("Frames extraction started");
-  const marks = pickStructureTimes(duration, times);
-  logStructure(`Frames extracted: ${marks.length}`, { times: marks });
-
-  const fallback = fallbackStructure(duration, times);
-
-  if (!Number.isFinite(duration) || duration <= 0) {
-    logStructureError("validate", "invalid duration");
-    return fallback;
-  }
-
-  try {
-    let segs = await requestStructure(duration, times);
-    if (!segs) {
-      logStructure("Retrying once");
-      try {
-        segs = await requestStructure(duration, times);
-      } catch (err) {
-        logStructureError("retry", err, { framesCount: marks.length, responseReceived: false });
-      }
-    }
-    if (segs?.length) {
-      logStructure("Structure validated", { count: segs.length });
-      const result: VideoStructure = {
-        duration,
-        segments: toNotes(segs),
-        structureStatus: "complete",
-        rhythm: segs.length <= 1 ? "plan unique" : `${segs.length} mouvements`,
-      };
-      logStructure("State updated");
-      logStructure("Moving to step 3");
-      return result;
-    }
-  } catch (err) {
-    logStructureError("request", err, { framesCount: marks.length, responseReceived: false });
-  }
-
-  logStructure("Using fallback structure", { segments: fallback.segments.length });
-  logStructure("State updated");
-  logStructure("Moving to step 3");
+  const fallback = fallbackStructure(Number.isFinite(duration) && duration > 0 ? duration : 1, times);
+  logStructure("Production windows", { segments: fallback.segments.length });
   return fallback;
 }

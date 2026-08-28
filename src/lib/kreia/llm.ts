@@ -1,6 +1,6 @@
 export const MODEL = "grok-4.5";
-export const FETCH_TIMEOUT_MS = 45_000;
-export const VISION_TIMEOUT_MS = 50_000;
+export const FETCH_TIMEOUT_MS = 90_000;
+export const VISION_TIMEOUT_MS = 100_000;
 
 export const INVALID_AI_MESSAGE =
   "L'analyse n'a pas pu être terminée. La réponse reçue est invalide. Veuillez réessayer.";

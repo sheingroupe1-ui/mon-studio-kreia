@@ -15,6 +15,7 @@ import type {
   VideoAnalysis,
 } from "./types";
 import { styleFromUserChoice } from "./visual-styles";
+import { splitAnalysis, splitProduction } from "./engines/split-plan";
 
 export type IdeaSliceResult = {
   checkpoint: IdeaCheckpoint;
@@ -343,8 +344,8 @@ export async function runIdeaSlice(args: {
       cp.dialogues = parsed.dialogues?.lines?.length ? parsed.dialogues : emptyDialogueBible();
       if (cp.dialogues.language !== "fr") cp.dialogues.language = "fr";
     } else {
-      const analysis = assembleIdeaAnalysis(data, cp);
-      let production = assembleIdeaProduction(analysis);
+      const analysis = splitAnalysis(assembleIdeaAnalysis(data, cp), data.durationSeconds);
+      let production = splitProduction(assembleIdeaProduction(analysis), analysis, data.durationSeconds);
       try {
         production = parseProduction(production);
       } catch {

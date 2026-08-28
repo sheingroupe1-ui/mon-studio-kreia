@@ -207,6 +207,8 @@ export type DialogueLine = {
   sourceText: string;
   displayText: string;
   timeHint: string;
+  startTime?: number;
+  endTime?: number;
   emotion: string;
   intention: string;
   confidence: DialogueConfidence;
@@ -310,6 +312,8 @@ export type SegmentNote = {
   dialogue?: string | null;
   performance?: DialoguePerformance;
   silentReactions?: SilentReaction[];
+  dialogues?: DialogueLine[];
+  status?: "ok" | "retry" | "failed";
   done?: boolean;
 };
 

@@ -59,16 +59,6 @@ function ProjectPage() {
 
   async function onGenerate() {
     if (!current?.analysis) return;
-    const unverified = (current.analysis.dialogues?.lines ?? []).filter(
-      (l) => l.attribution === "unverified" || !l.speakerId,
-    );
-    if (unverified.length) {
-      setTab("analysis");
-      toast.error(
-        `${unverified.length} réplique${unverified.length > 1 ? "s" : ""} sans personnage certain. Attribue-les avant de générer.`,
-      );
-      return;
-    }
     setBusy(true);
     setProgress({ step: 7, total: 7, label: "Préparation de votre projet" });
     await patchCurrent({ status: "generating" });

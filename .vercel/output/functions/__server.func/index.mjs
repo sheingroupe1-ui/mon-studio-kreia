@@ -14,6 +14,7 @@ var install_page_default = "<!DOCTYPE html>\n<html lang=\"en\" class=\"device-de
 var grokOgIdentity = { "site": {
 	"title": "KREIA Studio",
 	"name": "Mon studio KREIA",
+	"description": "Studio de reconstruction vidéo. Analysez une référence, identifiez les personnages et générez les prompts de scènes.",
 	"card": "custom",
 	"color": "0B0D10",
 	"image": "/og.jpg"

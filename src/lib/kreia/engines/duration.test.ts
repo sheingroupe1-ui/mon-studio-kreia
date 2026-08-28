@@ -5,9 +5,12 @@ import {
   collapseAnalysisScenes,
   collapseProductionScenes,
   defaultIdeaDuration,
+  expectedSceneCount,
   ideaSceneCount,
+  inferSourceDuration,
   packDurations,
   proposeSegments,
+  splitOversizedAnalysisScene,
   totalPackedDuration,
 } from "./duration.ts";
 import type { SceneAnalysis, SceneProduction } from "../types.ts";
@@ -37,10 +40,20 @@ describe("chooseSceneCount", () => {
     assert.equal(chooseSceneCount(10, 4), 1);
   });
 
-  it("caps a 24s source around 3–4 scenes", () => {
+  it("maps 60s to exactly 6 scenes", () => {
+    assert.equal(expectedSceneCount(60), 6);
+    assert.equal(chooseSceneCount(60, 1), 6);
+    assert.equal(chooseSceneCount(65, 1), 7);
+  });
+
+  it("uses the last frame time when declared duration is missing", () => {
+    assert.equal(inferSourceDuration(0, { frameTimes: [1, 12, 58] }), 58);
+    assert.equal(expectedSceneCount(inferSourceDuration(10, { frameTimes: [58] })), 6);
+  });
+
+  it("caps a 24s source at 3 scenes of 10s", () => {
     const n = chooseSceneCount(24, 12);
-    assert.ok(n <= 4);
-    assert.ok(n >= 2);
+    assert.equal(n, 3);
   });
 });
 
@@ -93,6 +106,30 @@ describe("collapseAnalysisScenes", () => {
     assert.match(out[0]?.dialogue ?? "", /promis de ne jamais partir/);
     assert.match(out[0]?.dialogue ?? "", /pas le choix/);
   });
+
+  it("expands a single 60s analysis into 6 scenes", () => {
+    const out = collapseAnalysisScenes([stubScene(0)], 60);
+    assert.equal(out.length, 6);
+    assert.ok(out.every((s) => s.estimatedDuration <= 10));
+  });
+
+  it("splits one scene with many replicas across a 60s source", () => {
+    const scene = stubScene(0);
+    scene.dialogue = [
+      "Marie : Tu savais pour elle.",
+      "Jean : Oui.",
+      "Marie : Depuis combien de temps ?",
+      "Jean : Des mois.",
+      "Marie : Pourquoi ?",
+      "Jean : Je n'avais pas le choix.",
+    ].join("\n");
+    const out = splitOversizedAnalysisScene([scene], 60);
+    assert.equal(out.length, 6);
+    const spoken = out.map((s) => s.dialogue).filter(Boolean);
+    assert.ok(spoken.length >= 2);
+    assert.equal(spoken.join("\n").includes("Tu savais pour elle"), true);
+    assert.equal(out.filter((s) => s.dialogue === scene.dialogue).length < out.length, true);
+  });
 });
 
 describe("collapseProductionScenes", () => {
@@ -117,6 +154,29 @@ describe("collapseProductionScenes", () => {
     assert.equal(out[0]?.duration, 10);
     assert.equal(totalPackedDuration(out.map((s) => s.duration)), 10);
   });
+
+  it("refuses to finalize a 60s video as a single prompt", () => {
+    const stubs: SceneProduction[] = [
+      {
+        number: 1,
+        duration: 10,
+        characters: ["CHARACTER_01"],
+        location: "set",
+        action: "Toute l'histoire",
+        emotion: "",
+        camera: "",
+        lighting: "",
+        visualStyle: "",
+        audio: "",
+        dialogue: "Sarah : tout. Marc : tout.",
+        videoPrompt: "one giant prompt",
+        continuityNotes: "",
+      },
+    ];
+    const out = collapseProductionScenes(stubs, 60);
+    assert.equal(out.length, 6);
+    assert.ok(out.every((s) => s.duration <= 10));
+  });
 });
 
 describe("proposeSegments", () => {
@@ -125,6 +185,15 @@ describe("proposeSegments", () => {
     assert.equal(segs.length, 1);
     assert.equal(segs[0]?.start, 0);
     assert.equal(segs[0]?.end, 10);
+  });
+
+  it("splits a 60s video into 6 windows of 10s", () => {
+    const segs = proposeSegments(60, [1, 12, 25, 38, 49, 58]);
+    assert.equal(segs.length, 6);
+    assert.equal(segs[0]?.start, 0);
+    assert.equal(segs[0]?.end, 10);
+    assert.equal(segs[5]?.start, 50);
+    assert.equal(segs[5]?.end, 60);
   });
 });
 

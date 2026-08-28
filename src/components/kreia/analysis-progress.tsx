@@ -23,7 +23,7 @@ export function AnalysisProgressView({
         <p className="mt-1 text-xs text-[var(--fg-subtle)]">Création à partir de votre idée — sans vidéo.</p>
       ) : typeof progress.segmentsDone === "number" && typeof progress.segmentsTotal === "number" ? (
         <p className="mt-1 text-xs text-[var(--fg-subtle)]">
-          Analyse des segments : {progress.segmentsDone} / {progress.segmentsTotal}
+          Analyse de la scène {progress.segmentsDone} / {progress.segmentsTotal}
         </p>
       ) : progress.compact ? (
         <p className="mt-1 text-xs text-[var(--fg-subtle)]">

@@ -1,6 +1,7 @@
 import { anatomyPromptBlock } from "./anatomy";
 import { angelPromptBlock } from "./angel";
 import { fruitHumanoidPromptBlock } from "./fruit-humanoid";
+import { chooseSceneCount, expectedSceneCount } from "./duration";
 import type { ProjectKind } from "../types";
 
 export function buildAnalysisSystemPrompt(kind: ProjectKind): string {
@@ -55,17 +56,20 @@ HOOK
 Analyse les premières secondes (premiers photogrammes). Décris le mécanisme d'attention, pas un slogan marketing.
 
 SCÈNES
-Découpe UNIQUEMENT selon un vrai changement narratif : lieu, temps, personnages présents, ou action.
-Un simple changement de caméra / de plan n'est PAS une nouvelle scène.
-Plusieurs plans courts de la MÊME action se regroupent en UNE scène.
+Une « scène » ici est une UNITÉ DE PRODUCTION VIDÉO, pas uniquement une unité narrative.
+Même si l'action continue sans coupure narrative, tu DOIS découper en plusieurs scènes
+de 6 à 10 secondes chacune (jamais plus de 10 s par scène) : chaque scène devient un prompt vidéo séparé.
+Un changement de caméra / de plan à l'intérieur d'une même action PEUT justifier une nouvelle
+scène de production s'il aide à respecter la limite de 10 secondes.
+Ne fusionne pas 60 secondes d'action continue en une seule scène.
 
 BUDGET DURÉE — RÈGLE ABSOLUE
-La durée source D est fournie. La somme des estimatedDuration doit rester proche de D (écart < 20 %).
-Interdit : une scène toutes les 6 secondes, ou 4 prompts de 6 s pour une vidéo de 10 s.
-Si D ≤ 11 s → UNE seule scène, estimatedDuration = 6, 8 ou 10 (la plus proche de D).
-Si D ≤ 16 s → au plus 2 scènes.
-estimatedDuration ∈ {6, 8, 10}. Jamais gonfler artificiellement.
-Ne crée pas de scène que les images ne justifient pas. Si le découpage est incertain, limitations + confidence = "inferred".
+1 PROMPT = 1 SCÈNE = MAXIMUM 10 SECONDES.
+Nombre de scènes = arrondi supérieur de D / 10.
+D = 10 s → 1 scène. D = 20 s → 2. D = 60 s → 6. D = 65 s → 7.
+Interdit : un seul prompt pour une vidéo > 10 s.
+estimatedDuration ∈ {6, 8, 10}, jamais au-delà de 10.
+Couper de préférence en fin de réplique / changement d'action, jamais au milieu d'une phrase si évitable.
 
 AUDIO ET DIALOGUES — RÈGLE ABSOLUE
 Hiérarchie des sources, dans cet ordre :
@@ -81,9 +85,11 @@ Si une portion est peu claire : confidence = "uncertain" et conserve les mots en
 Si les lèvres bougent sans contenu identifiable : confidence = "inaudible", sourceText = "".
 Distingue dialogue, voix off, musique, ambiance, bruitages, silence.
 Chaque réplique va dans dialogues.lines : UNE entrée = UN personnage + SA réplique exacte + speakerId.
+sourceText = copie mot à mot des paroles entendues. Interdit d'écrire une phrase « plus naturelle » ou un résumé.
 Ne jamais fusionner deux locuteurs dans une même ligne. Ne jamais attribuer une réplique au personnage principal par défaut.
 Si le locuteur n'est pas certain : attribution = "unverified", speakerId = null.
-Ordre de parole = ordre source. speakerId = CHARACTER_XX du locuteur réel.
+Voix off / narrateur : speakerId = "NARRATOR", speakerLabel = "Narrateur". Ne jamais coller la voix off sur un personnage à l'écran.
+Ordre de parole = ordre source. speakerId = CHARACTER_XX du locuteur réel, jamais un autre.
 
 INTERPRÉTATION — RÈGLE ABSOLUE
 Pour CHAQUE réplique, décrire comment elle est réellement dite et vécue dans la vidéo :
@@ -114,6 +120,11 @@ export function buildAnalysisUserPrompt(args: {
     .map((t, i) => `image ${i + 1} = ${t.toFixed(2)}s`)
     .join(", ");
 
+  const targetScenes = chooseSceneCount(
+    args.durationSeconds,
+    Math.round(args.durationSeconds / 8),
+  );
+
   return `
 MÉTA DONNÉES VIDÉO
 - durée : ${args.durationSeconds.toFixed(2)} s  ← budget total des scènes
@@ -121,7 +132,7 @@ MÉTA DONNÉES VIDÉO
 - type de projet : ${args.kind === "fruit-humanoid" ? "Histoire Fruit humanoïde" : args.kind === "angel" ? "Anges" : "Histoire humaine"}
 - photogrammes fournis (dans l'ordre) : ${times}
 - transcription audio : ${args.transcript ? "fournie ci-dessous — C'EST LA RÉFÉRENCE DES DIALOGUES, à recopier mot à mot" : "non disponible — ne pas inventer de dialogues ; sous-titres à l'écran uniquement si lisibles"}
-- plafond de scènes : ${args.durationSeconds <= 11 ? "1 scène unique" : args.durationSeconds <= 16 ? "2 scènes maximum" : `environ ${Math.max(1, Math.round(args.durationSeconds / 8))} scènes, jamais plus de ${Math.max(1, Math.round(args.durationSeconds / 6))}`}
+- Découpe cette vidéo de ${args.durationSeconds.toFixed(1)}s en ENVIRON ${targetScenes} scènes de production (EXACTEMENT ${expectedSceneCount(args.durationSeconds)} unité(s) de 10 s maximum).
 ${args.userNotes ? `- brief / notes utilisateur (contexte complémentaire, à croiser avec la vidéo, pas une vérité absolue) :\n${args.userNotes}` : ""}
 
 ${args.transcript ? `TRANSCRIPTION (source observée)\n${args.transcript}\n` : ""}

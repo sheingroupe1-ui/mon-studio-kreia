@@ -178,7 +178,7 @@ export default defineConfig(({ command, isPreview }) => ({
             preset: "vercel",
             vercel: {
               functions: {
-                maxDuration: 60,
+                maxDuration: 120,
                 memory: 1024,
               },
             },

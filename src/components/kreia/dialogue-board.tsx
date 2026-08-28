@@ -158,7 +158,7 @@ export function DialogueBoard({
         </p>
         {onValidate ? (
           <Button type="button" disabled={validating} onClick={onValidate}>
-            Valider les dialogues
+            Continuer avec l’analyse automatique
           </Button>
         ) : null}
       </div>
@@ -182,9 +182,14 @@ export function DialogueBoard({
       </p>
       {unverified ? (
         <p className="rounded-[var(--radius-md)] bg-[color-mix(in_oklab,var(--speaker-amber)_16%,transparent)] px-3 py-2 text-xs text-[var(--fg)]">
-          {unverified} réplique{unverified > 1 ? "s" : ""} à attribuer. Choisis le personnage avant de générer.
+          {unverified} réplique{unverified > 1 ? "s" : ""} marquée{unverified > 1 ? "s" : ""} « à vérifier ».
+          KREIA a déjà attribué un locuteur — vous pouvez corriger, ou continuer.
         </p>
-      ) : null}
+      ) : (
+        <p className="text-xs text-[var(--fg-subtle)]">
+          Attribution automatique. Corrigez seulement si un locuteur est faux.
+        </p>
+      )}
 
       <ul className="space-y-2">
         {lines.map((line, index) => {
@@ -305,7 +310,7 @@ export function DialogueBoard({
       </ul>
       {onValidate ? (
         <Button type="button" disabled={validating} onClick={onValidate}>
-          Valider les dialogues
+          Continuer avec l’analyse automatique
         </Button>
       ) : null}
     </div>

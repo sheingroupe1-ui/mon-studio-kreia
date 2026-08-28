@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { downloadText, projectToMarkdown } from "@/lib/kreia/export";
 import { dialogueCharCount, matchCharacter, swatchForCharacter } from "@/lib/kreia/engines/dialogues";
+import { formatClock, sceneWindows } from "@/lib/kreia/engines/duration";
 import type { KreiaProject } from "@/lib/kreia/types";
 import { CopyButton } from "./copy-button.tsx";
 import { Field, PromptBlock, SectionCard } from "./section-card.tsx";
@@ -141,15 +142,27 @@ export function ProductionView({
 
       <SectionCard id="scenes" kicker="04" title="Découpage et prompts vidéo">
         <div className="space-y-4">
-          {plan.scenes.map((scene) => (
+          {plan.scenes.map((scene) => {
+            const windows = sceneWindows(project.video.durationSeconds);
+            const window = windows[scene.number - 1];
+            return (
             <article
               key={scene.number}
               className="rounded-[var(--radius-lg)] bg-[var(--bg)] p-4 sm:p-5"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="font-display text-2xl">
-                  Scène {String(scene.number).padStart(2, "0")}
-                </h3>
+                <div>
+                  <h3 className="font-display text-2xl">
+                    Scène {String(scene.number).padStart(2, "0")}
+                  </h3>
+                  {window ? (
+                    <p className="mt-1 text-xs text-[var(--fg-subtle)]">
+                      Durée : {formatClock(window.start)} → {formatClock(window.end)}
+                      {" · "}
+                      {scene.duration} secondes
+                    </p>
+                  ) : null}
+                </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone="gold">{scene.duration} s</Badge>
                   {onEdit ? (
@@ -192,7 +205,7 @@ export function ProductionView({
                 return (
                   <div className="mt-3 space-y-2">
                     <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--fg-subtle)]">
-                      Dialogues source · {total} caractères
+                      TOTAL DIALOGUES : {total} caractères
                     </p>
                     {lines.length
                       ? lines.map((line) => {
@@ -235,7 +248,8 @@ export function ProductionView({
                 <PromptBlock text={scene.videoPrompt} />
               </div>
             </article>
-          ))}
+            );
+          })}
         </div>
       </SectionCard>
     </div>

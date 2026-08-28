@@ -3,7 +3,8 @@ import { angelPromptBlock } from "./angel";
 import { buildContinuityBible, expandCharacterIds } from "./continuity";
 import { fruitHumanoidPromptBlock } from "./fruit-humanoid";
 import { identityParagraph } from "./identity";
-import { formatLockedDialogue } from "./dialogues";
+import { formatLockedDialogue, linesForScene } from "./dialogues";
+import { formatClock } from "./duration";
 import type { GenerateInput, ReconstructionMode, VideoAnalysis } from "../types";
 
 function modeInstructions(mode: ReconstructionMode): string {
@@ -51,7 +52,8 @@ RÈGLES
 - Les fiches personnages validées par l'utilisateur sont VERROUILLÉES : ne jamais changer visage, coiffure, teint, morphologie, âge apparent, yeux, proportions.
 - LANGUE PARLÉE : toutes les répliques entre guillemets dans videoPrompt et scene.dialogue sont en français, même si la source est étrangère. Le sens reste fidèle.
 - Ne jamais transformer un fruit en autre fruit, un ange en humain, ni ajouter/retirer des ailes absentes de la fiche.
-- Durée de chaque prompt vidéo : 6, 8 ou 10 secondes — choisir la plus juste pour l'action, jamais gonfler artificiellement.
+- Durée de chaque prompt vidéo : 6, 8 ou 10 secondes — JAMAIS plus de 10 s.
+- Nombre de scènes = arrondi supérieur de la durée source / 10. Une vidéo de 60 s → 6 prompts. Interdit : un seul prompt si la source > 10 s.
 - La SOMME des durées de scènes doit rester proche de la durée source. Interdit de transformer 10 s de source en 24 s de prompts.
 - Le hook n'ajoute PAS de durée : c'est le début de la scène 1, pas une scène supplémentaire.
 - Continuité : vêtements, lumière, décor, époque, météo. Une scène est la suite de la précédente.
@@ -81,27 +83,28 @@ export function buildGenerationUserPrompt(input: GenerateInput): string {
   const sceneIndex = analysis.scenes
     .map((s) => {
       const who = expandCharacterIds(s.characters, analysis.characters);
-      const locked = formatLockedDialogue(
-        (analysis.dialogues?.lines ?? []).filter((l) => l.sceneNumber === s.number),
-      );
+      const locked = formatLockedDialogue(linesForScene(analysis.dialogues?.lines ?? [], s.number));
       return `Scène ${String(s.number).padStart(2, "0")} (~${s.estimatedDuration}s) | ${s.setting} | ${s.action} | caméra: ${s.camera} | persos:\n${who}\nDIALOGUE VERROUILLÉ : ${locked ?? "aucun — ne pas inventer"}`;
     })
     .join("\n\n");
 
-  const lockedBlock = (analysis.dialogues?.lines ?? [])
-    .sort((a, b) => a.order - b.order)
-    .map(
-      (l) =>
-        `${l.id} | SCÈNE ${String(l.sceneNumber).padStart(2, "0")} | ordre ${l.order} | ${l.speakerId || "LOCUTEUR?"} ${l.speakerLabel || ""} | ${l.attribution} | « ${l.displayText || l.sourceText} » | émotion: ${l.performance?.emotionDominant || l.emotion || "?"} | ton: ${l.performance?.tone || "?"} | visage: ${l.performance?.facialExpression || "?"} | geste: ${l.performance?.gesture || "aucun"} | larmes: ${l.performance?.tears || "aucune"}`,
-    )
-    .join("\n");
+  const lockedBlock = analysis.scenes
+    .map((s) => {
+      const owned = linesForScene(analysis.dialogues?.lines ?? [], s.number);
+      if (!owned.length) return `Scène ${String(s.number).padStart(2, "0")} (${s.startHint}) : aucun dialogue`;
+      return `Scène ${String(s.number).padStart(2, "0")} (${s.startHint}) :\n${owned
+        .map((l) => `${l.id} ${l.timeHint || formatClock(l.startTime ?? 0)} ${l.speakerLabel || l.speakerId} « ${l.displayText || l.sourceText} »`)
+        .join("\n")}`;
+    })
+    .join("\n\n");
 
   return `
 ${modeInstructions(mode)}
 
 DURÉE SOURCE : ${durationSeconds.toFixed(1)} s
-BUDGET : la somme des duration de "scenes" ≈ ${durationSeconds.toFixed(1)} s (jamais le double).
-Si la source ≤ 11 s : UNE seule scène (duration 6, 8 ou 10, la plus proche).
+BUDGET : ${Math.ceil(Math.max(durationSeconds, 0.1) / 10)} scène(s) de 10 s maximum, somme des duration ≈ ${durationSeconds.toFixed(1)} s.
+Si la source ≤ 10 s : UNE seule scène (duration 6, 8 ou 10, la plus proche).
+Si la source > 10 s : INTERDIT de renvoyer un seul prompt. Découper chronologiquement.
 Le hook.duration = duration de la scène 1. Ce n'est pas du temps en plus.
 ${userNotes ? `NOTES UTILISATEUR : ${userNotes}` : ""}
 
@@ -125,7 +128,7 @@ ${JSON.stringify(analysis.cinematic, null, 2)}
 AUDIO
 ${JSON.stringify(analysis.audio, null, 2)}
 
-DIALOGUES SOURCE VERROUILLÉS — À REPRENDRE MOT À MOT
+DIALOGUES PAR SCÈNE — ne jamais copier la liste d'une autre scène dans un prompt
 ${lockedBlock || "(aucun dialogue identifiable)"}
 Source : ${analysis.dialogues?.source ?? analysis.audio.source}
 Transcription brute : ${analysis.dialogues?.rawTranscript || analysis.audio.transcriptExcerpt || "non disponible"}

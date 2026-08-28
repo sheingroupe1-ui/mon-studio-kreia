@@ -12,6 +12,9 @@ import {
   isFaithfulToTranscript,
   reassignDialogueSpeaker,
   substituteNames,
+  assignDialoguesToWindows,
+  linesForScene,
+  timedUtterancesFromTranscript,
   utterancesFromTranscript,
 } from "./dialogues.ts";
 import type { CharacterSheet, SceneAnalysis, SceneProduction, VideoAnalysis } from "../types.ts";
@@ -68,6 +71,64 @@ describe("utterancesFromTranscript", () => {
     const u = utterancesFromTranscript("Je t'en prie... ne me quitte pas.");
     assert.equal(u.length, 1);
     assert.match(u[0] ?? "", /ne me quitte pas/);
+  });
+});
+
+describe("assignDialoguesToWindows", () => {
+  function line(id: string, text: string, start: number, scene = 1): ReturnType<typeof assignDialoguesToWindows>[number] {
+    return {
+      id,
+      sceneNumber: scene,
+      order: 1,
+      speakerId: "CHARACTER_01",
+      speakerLabel: "Sarah",
+      sourceText: text,
+      displayText: text,
+      timeHint: "",
+      startTime: start,
+      endTime: start + 2,
+      emotion: "",
+      intention: "",
+      confidence: "clear",
+      attribution: "certain",
+      performance: emptyPerformance(),
+    };
+  }
+
+  it("puts a 12s replica in scene 2 of a 60s video, never in scene 1", () => {
+    const out = assignDialoguesToWindows(
+      [
+        line("D001", "Première", 2),
+        line("D002", "Je ne veux plus te croire", 12.4),
+        line("D003", "Plus tard", 38),
+      ],
+      60,
+    );
+    assert.equal(out.find((l) => l.id === "D001")?.sceneNumber, 1);
+    assert.equal(out.find((l) => l.id === "D002")?.sceneNumber, 2);
+    assert.equal(out.find((l) => l.id === "D003")?.sceneNumber, 4);
+    assert.equal(linesForScene(out, 1).length, 1);
+  });
+
+  it("does not dump every replica into scene 1 when timestamps are missing", () => {
+    const dumped = Array.from({ length: 12 }, (_, i) => line(`D${String(i + 1).padStart(3, "0")}`, `Réplique ${i + 1}`, 0, 1));
+    dumped.forEach((l) => {
+      l.startTime = undefined;
+      l.endTime = undefined;
+    });
+    const out = assignDialoguesToWindows(dumped, 60);
+    assert.ok(linesForScene(out, 1).length < out.length);
+    assert.ok(out.some((l) => l.sceneNumber === 6));
+  });
+});
+
+describe("timedUtterancesFromTranscript", () => {
+  it("keeps the timestamp of each replica", () => {
+    const u = timedUtterancesFromTranscript(
+      "[0.0s] Bonjour.\n[12.4s] Je ne veux plus te croire.\n[38.0s] C'est fini.",
+    );
+    assert.equal(u.length, 3);
+    assert.ok(Math.abs(u[1]!.startTime - 12.4) < 0.05);
   });
 });
 
@@ -213,6 +274,7 @@ describe("enforceProductionDialogues", () => {
     assert.equal(out.scenes[0]?.dialogue?.includes("alternative"), false);
     assert.match(out.scenes[0]?.videoPrompt ?? "", /Dialogue exact/);
     assert.match(out.scenes[0]?.videoPrompt ?? "", /Je n'avais pas le choix/);
+    assert.equal((out.scenes[0]?.videoPrompt ?? "").includes("I never really had a choice"), false);
     assert.match(out.scenario.dialoguesNote, /verrouillés/);
   });
 });
@@ -334,15 +396,16 @@ describe("attachDialogues", () => {
 });
 
 describe("speaker attribution", () => {
-  it("does not dump unmatched lines onto the principal character", () => {
+  it("assigns an unmatched replica to the only character automatically", () => {
     const bible = finalizeLockedDialogues({
       transcript: "Je n'avais pas le choix.",
       llmLines: [],
       characters: [character("Marie")],
       sceneCount: 1,
     });
-    assert.equal(bible.lines[0]?.speakerId, null);
-    assert.equal(bible.lines[0]?.attribution, "unverified");
+    assert.equal(bible.lines[0]?.speakerId, "CHARACTER_01");
+    assert.equal(bible.lines[0]?.speakerLabel, "Marie");
+    assert.equal(bible.lines[0]?.attribution, "certain");
   });
 
   it("splits mixed speakers and keeps order", () => {
@@ -429,5 +492,75 @@ describe("speaker attribution", () => {
     assert.match(block ?? "", /yeux remplis de larmes/);
     assert.match(block ?? "", /Dialogue exact/);
     assert.equal((block ?? "").indexOf("MARIE") < (block ?? "").indexOf("JEAN"), true);
+  });
+
+  it("keeps transcript speakers and drops a paraphrased LLM line", () => {
+    const marie = character("Marie");
+    const jean: CharacterSheet = { ...character("Jean"), id: "CHARACTER_02", designation: "Homme" };
+    const bible = finalizeLockedDialogues({
+      transcript: "Marie : Tu savais pour elle.\nJean : Oui.\nNarrateur : Ils ne se parlèrent plus.",
+      llmLines: [
+        {
+          id: "D001",
+          sceneNumber: 1,
+          order: 1,
+          speakerId: "CHARACTER_01",
+          speakerLabel: "Marie",
+          sourceText: "Tu étais au courant de cette histoire avec l'autre femme.",
+          displayText: "Tu étais au courant de cette histoire avec l'autre femme.",
+          timeHint: "",
+          emotion: "",
+          intention: "",
+          confidence: "clear",
+          attribution: "certain",
+          performance: emptyPerformance(),
+        },
+      ],
+      characters: [marie, jean],
+      sceneCount: 1,
+    });
+    assert.equal(bible.lines.length, 3);
+    assert.equal(bible.lines[0]?.speakerId, "CHARACTER_01");
+    assert.match(bible.lines[0]?.sourceText ?? "", /Tu savais pour elle/);
+    assert.equal(bible.lines[0]?.sourceText.includes("autre femme"), false);
+    assert.equal(bible.lines[1]?.speakerId, "CHARACTER_02");
+    assert.equal(bible.lines[1]?.sourceText, "Oui.");
+    assert.equal(bible.lines[2]?.speakerId, "NARRATOR");
+    assert.equal(bible.lines[2]?.speakerLabel, "Narrateur");
+  });
+
+  it("assigns untagged lines automatically between two characters", () => {
+    const marie = character("Marie");
+    const jean: CharacterSheet = { ...character("Jean"), id: "CHARACTER_02", designation: "Homme" };
+    const bible = finalizeLockedDialogues({
+      transcript: "Je veux la vérité. Pourquoi tu mens ?",
+      llmLines: [],
+      characters: [marie, jean],
+      sceneCount: 1,
+    });
+    assert.equal(bible.lines.length >= 1, true);
+    assert.ok(bible.lines.every((line) => line.speakerId));
+    assert.equal(bible.lines[0]?.sourceText.includes("vérité") || bible.lines[0]?.sourceText.includes("mens"), true);
+  });
+
+  it("gives a vocative line to the other character", () => {
+    const marie = character("Marie");
+    const jean: CharacterSheet = { ...character("Jean"), id: "CHARACTER_02", designation: "Homme" };
+    const bible = finalizeLockedDialogues({
+      transcript: "Marie, attends-moi !",
+      llmLines: [],
+      characters: [marie, jean],
+      sceneCount: 1,
+    });
+    assert.equal(bible.lines[0]?.speakerId, "CHARACTER_02");
+    assert.equal(bible.lines[0]?.speakerLabel, "Jean");
+    assert.match(bible.lines[0]?.sourceText ?? "", /attends-moi/);
+  });
+
+  it("keeps the same speaker across two sentences of one tagged replica", () => {
+    const u = utterancesFromTranscript("Marie : Bonjour. Comment ça va ?");
+    assert.equal(u.length, 2);
+    assert.match(u[0] ?? "", /^Marie :/);
+    assert.match(u[1] ?? "", /^Marie :/);
   });
 });

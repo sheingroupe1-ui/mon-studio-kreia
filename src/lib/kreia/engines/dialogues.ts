@@ -14,6 +14,7 @@ import type {
   VideoAnalysis,
 } from "../types";
 import { identityParagraph, styleWeave } from "./identity.ts";
+import { formatClock, inferSourceDuration, sceneIndexAt, sceneWindows } from "./duration.ts";
 
 export type SpeakerSwatch = {
   id: string;
@@ -118,20 +119,281 @@ export function applyNameSubstitutionsToBible(
 
 export function utterancesFromTranscript(transcript: string): string[] {
   const cleaned = transcript.replace(/\[\d+(?:\.\d+)?s\]/g, "\n");
-  const protectedEllipsis = cleaned.replace(/\.{3}|…/g, "\uE000");
-  const parts = protectedEllipsis
-    .split(/(?<=[.!?])\s+|\n+/)
-    .map((s) => s.replace(/\uE000/g, "...").replace(/^["«»""]+|["«»""]+$/g, "").trim())
-    .filter((s) => s.length > 1);
+  const blocks = cleaned.split(/\n+/).map((s) => s.trim()).filter(Boolean);
   const unique: string[] = [];
   const seen = new Set<string>();
-  for (const part of mergeUtteranceFragments(parts)) {
-    const key = normalizeSpoken(part);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    unique.push(part);
+  for (const block of blocks) {
+    const tagged = parseTaggedReplica(block);
+    const protectedEllipsis = tagged.text.replace(/\.{3}|…/g, "\uE000");
+    const parts = protectedEllipsis
+      .split(/(?<=[.!?])\s+/)
+      .map((s) => s.replace(/\uE000/g, "...").replace(/^["«»""]+|["«»""]+$/g, "").trim())
+      .filter((s) => s.length > 1);
+    for (const part of mergeUtteranceFragments(parts)) {
+      const spoken = tagged.speaker ? `${tagged.speaker} : ${part}` : part;
+      const key = normalizeSpoken(spoken);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      unique.push(spoken);
+    }
   }
   return unique;
+}
+
+export type TimedUtterance = { text: string; startTime: number; endTime: number };
+
+export function parseClockToSeconds(value: string): number | null {
+  const raw = (value || "").trim();
+  if (!raw) return null;
+  const clock = raw.match(/(\d{1,2}):(\d{2})(?:\.(\d+))?/);
+  if (clock) return Number(clock[1]) * 60 + Number(clock[2]) + (clock[3] ? Number(`0.${clock[3]}`) : 0);
+  const sec = raw.match(/(\d+(?:\.\d+)?)\s*s\b/i);
+  if (sec) return Number(sec[1]);
+  const plain = raw.match(/^(\d+(?:\.\d+)?)$/);
+  if (plain) return Number(plain[1]);
+  return null;
+}
+
+export function timedUtterancesFromTranscript(transcript: string): TimedUtterance[] {
+  const marks = [...transcript.matchAll(/\[(\d+(?:\.\d+)?)s\]/gi)];
+  if (!marks.length) {
+    return utterancesFromTranscript(transcript).map((text) => ({ text, startTime: 0, endTime: 0 }));
+  }
+  const out: TimedUtterance[] = [];
+  for (let i = 0; i < marks.length; i += 1) {
+    const startTime = Number(marks[i]![1]);
+    const from = (marks[i]!.index ?? 0) + marks[i]![0].length;
+    const to = i + 1 < marks.length ? marks[i + 1]!.index ?? transcript.length : transcript.length;
+    const chunk = transcript.slice(from, to);
+    const nextTime = i + 1 < marks.length ? Number(marks[i + 1]![1]) : startTime + 4;
+    const parts = utterancesFromTranscript(chunk);
+    const span = Math.max(0.4, (nextTime - startTime) / Math.max(1, parts.length));
+    parts.forEach((text, j) => {
+      out.push({
+        text,
+        startTime: startTime + j * span,
+        endTime: startTime + (j + 1) * span,
+      });
+    });
+  }
+  return out;
+}
+
+export function linesForScene(lines: DialogueLine[], sceneNumber: number): DialogueLine[] {
+  return lines
+    .filter((line) => line.sceneNumber === sceneNumber)
+    .sort((a, b) => a.order - b.order || (a.startTime ?? 0) - (b.startTime ?? 0));
+}
+
+export function assignDialoguesToWindows(lines: DialogueLine[], sourceDuration: number): DialogueLine[] {
+  const duration = Number.isFinite(sourceDuration) && sourceDuration > 0 ? sourceDuration : Math.max(10, lines.length);
+  const windows = sceneWindows(duration);
+  if (!lines.length) return [];
+  if (windows.length <= 1) {
+    return lines.map((line) => ({
+      ...line,
+      sceneNumber: 1,
+      startTime: line.startTime ?? 0,
+      endTime: line.endTime ?? duration,
+    }));
+  }
+
+  const withTimes = lines.map((line, i) => {
+    let start =
+      typeof line.startTime === "number" && Number.isFinite(line.startTime)
+        ? line.startTime
+        : parseClockToSeconds(line.timeHint ?? "");
+    if (start == null || start < 0) start = (i / Math.max(1, lines.length)) * duration;
+    const end =
+      typeof line.endTime === "number" && line.endTime > start ? line.endTime : Math.min(duration, start + 2.5);
+    return { ...line, startTime: start, endTime: end };
+  });
+
+  let assigned = withTimes.map((line) => {
+    const sceneNumber = sceneIndexAt(line.startTime ?? 0, duration);
+    return {
+      ...line,
+      sceneNumber,
+      timeHint: `${formatClock(line.startTime ?? 0)} → ${formatClock(line.endTime ?? line.startTime ?? 0)}`,
+    };
+  });
+
+  const total = assigned.length;
+  if (duration > 10 && total >= 2) {
+    const dumped = windows.some((_, i) => linesForScene(assigned, i + 1).length === total);
+    if (dumped) {
+      assigned = withTimes.map((line, i) => {
+        const start = (i / total) * duration;
+        const end = ((i + 1) / total) * duration;
+        return {
+          ...line,
+          startTime: start,
+          endTime: end,
+          sceneNumber: sceneIndexAt(start, duration),
+          timeHint: `${formatClock(start)} → ${formatClock(end)}`,
+        };
+      });
+    }
+  }
+
+  return rebalanceDialogueChars(assigned, duration);
+}
+
+function rebalanceDialogueChars(lines: DialogueLine[], duration: number): DialogueLine[] {
+  const windows = sceneWindows(duration);
+  let next = lines.slice();
+  for (let guard = 0; guard < 32; guard += 1) {
+    let moved = false;
+    for (let i = 0; i < windows.length - 1; i += 1) {
+      const owned = linesForScene(next, i + 1);
+      if (owned.length <= 3 && dialogueCharCount(owned) <= 150) continue;
+      if (owned.length <= 1) continue;
+      const extra = owned[owned.length - 1]!;
+      const dest = windows[i + 1]!;
+      next = next.map((line) =>
+        line.id === extra.id
+          ? {
+              ...line,
+              sceneNumber: i + 2,
+              startTime: Math.max(dest.start, line.startTime ?? dest.start),
+              timeHint: `${formatClock(dest.start)} → ${formatClock(dest.end)}`,
+            }
+          : line,
+      );
+      moved = true;
+    }
+    if (!moved) break;
+  }
+  return next.map((line, i) => ({ ...line, order: i + 1 }));
+}
+
+function poolForLine(
+  line: DialogueLine,
+  characters: CharacterSheet[],
+  scenes?: SceneAnalysis[],
+): CharacterSheet[] {
+  const ids = scenes?.find((s) => s.number === line.sceneNumber)?.characters ?? [];
+  const inScene = ids
+    .map((id) => matchCharacter(id, characters))
+    .filter((c): c is CharacterSheet => Boolean(c));
+  return inScene.length ? inScene : characters;
+}
+
+function addressedCharacter(text: string, pool: CharacterSheet[]): CharacterSheet | undefined {
+  const n = normalizeSpoken(text);
+  if (!n) return undefined;
+  const hits = pool.filter((c) => {
+    const tokens = [c.name, c.sourceName, c.designation]
+      .map((value) => normalizeSpoken(value || "").split(" ")[0] ?? "")
+      .filter((token) => token.length >= 3);
+    return tokens.some((token) => n === token || n.startsWith(`${token} `) || n.startsWith(`${token},`));
+  });
+  return hits.length === 1 ? hits[0] : undefined;
+}
+
+function looksSpeakerDumped(lines: DialogueLine[], characters: CharacterSheet[]): boolean {
+  if (characters.length < 2 || lines.length < 2) return false;
+  if (lines.some((line) => parseTaggedReplica(line.sourceText || line.displayText).speaker)) return false;
+  const ids = [...new Set(lines.map((line) => line.speakerId).filter(Boolean))];
+  return ids.length <= 1;
+}
+
+export function autoAssignSpeakers(
+  lines: DialogueLine[],
+  characters: CharacterSheet[],
+  scenes?: SceneAnalysis[],
+): DialogueLine[] {
+  if (!lines.length || !characters.length) return lines;
+  const dumped = looksSpeakerDumped(lines, characters);
+  let lastId: string | null = null;
+  return lines.map((line, index) => {
+    const tagged = parseTaggedReplica(line.sourceText || line.displayText);
+    const spoken = tagged.text || line.sourceText;
+    const fromTag = matchCharacter(tagged.speaker, characters);
+    if (fromTag) {
+      lastId = fromTag.id;
+      return {
+        ...line,
+        sourceText: spoken,
+        displayText: line.displayText && line.displayText !== line.sourceText ? line.displayText : spoken,
+        speakerId: fromTag.id,
+        speakerLabel: displayCharacterName(fromTag),
+        attribution: "certain",
+      };
+    }
+    if (isNarratorLabel(tagged.speaker || line.speakerLabel || line.speakerId)) {
+      lastId = "NARRATOR";
+      return {
+        ...line,
+        sourceText: spoken,
+        displayText: spoken,
+        speakerId: "NARRATOR",
+        speakerLabel: "Narrateur",
+        attribution: "certain",
+      };
+    }
+    const pool = poolForLine(line, characters, scenes);
+    const existing =
+      dumped ? undefined : matchCharacter(line.speakerId, characters) || matchCharacter(line.speakerLabel, characters);
+    if (existing) {
+      lastId = existing.id;
+      return {
+        ...line,
+        sourceText: spoken,
+        speakerId: existing.id,
+        speakerLabel: displayCharacterName(existing),
+        attribution: line.attribution === "unverified" ? "unverified" : "certain",
+      };
+    }
+    const addressed = addressedCharacter(spoken, pool);
+    if (addressed && pool.length >= 2) {
+      const speaker = pool.find((c) => c.id !== addressed.id);
+      if (speaker) {
+        lastId = speaker.id;
+        return {
+          ...line,
+          sourceText: spoken,
+          speakerId: speaker.id,
+          speakerLabel: displayCharacterName(speaker),
+          attribution: "certain",
+        };
+      }
+    }
+    if (pool.length === 1) {
+      lastId = pool[0]!.id;
+      return {
+        ...line,
+        sourceText: spoken,
+        speakerId: pool[0]!.id,
+        speakerLabel: displayCharacterName(pool[0]!),
+        attribution: "certain",
+      };
+    }
+    const prev = index > 0 ? lines[index - 1] : undefined;
+    const question = Boolean(prev && /[?？]\s*$/.test((prev.sourceText || prev.displayText || "").trim()));
+    if (lastId && lastId !== "NARRATOR" && pool.length >= 2) {
+      const other = pool.find((c) => c.id !== lastId) ?? characters.find((c) => c.id !== lastId);
+      if (other) {
+        lastId = other.id;
+        return {
+          ...line,
+          sourceText: spoken,
+          speakerId: other.id,
+          speakerLabel: displayCharacterName(other),
+          attribution: question ? "certain" : "unverified",
+        };
+      }
+    }
+    const first = pool.find((c) => c.prominence === "principal") ?? pool[0] ?? characters[0]!;
+    lastId = first.id;
+    return {
+      ...line,
+      sourceText: spoken,
+      speakerId: first.id,
+      speakerLabel: displayCharacterName(first),
+      attribution: pool.length <= 1 ? "certain" : "unverified",
+    };
+  });
 }
 
 export function mergeUtteranceFragments(parts: string[]): string[] {
@@ -155,14 +417,19 @@ export function mergeUtteranceFragments(parts: string[]): string[] {
 }
 
 export function isFaithfulToTranscript(line: string, transcript: string): boolean {
+  return overlapScore(line, transcript) >= 0.72;
+}
+
+export function overlapScore(line: string, transcript: string): number {
   const n = normalizeSpoken(line);
   const t = normalizeSpoken(transcript);
-  if (!n) return false;
-  if (t.includes(n)) return true;
+  if (!n || !t) return 0;
+  if (t === n) return 1;
+  if (t.includes(n) || n.includes(t)) return 0.94;
   const words = n.split(" ").filter((w) => w.length > 2);
-  if (words.length < 2) return t.includes(n);
+  if (!words.length) return t.includes(n) ? 1 : 0;
   const hits = words.filter((w) => t.includes(w)).length;
-  return hits / words.length >= 0.72;
+  return hits / words.length;
 }
 
 function parseConfidence(value: unknown): DialogueConfidence {
@@ -279,20 +546,42 @@ export function formatPerformancePrompt(line: DialogueLine): string {
   return rows.join("\n");
 }
 
+export function isNarratorLabel(label: string | null | undefined): boolean {
+  if (!label) return false;
+  const n = normalizeSpoken(label);
+  return /^(narrateur|narratrice|narrator|voix off|voice over|voixoff|commentateur|commentatrice|vo)$/.test(n);
+}
+
 export function matchCharacter(
   label: string | null | undefined,
   characters: CharacterSheet[],
 ): CharacterSheet | undefined {
-  if (!label) return undefined;
+  if (!label || isNarratorLabel(label)) return undefined;
   const n = normalizeSpoken(label);
   if (!n) return undefined;
-  return characters.find(
+  const exact = characters.find(
     (c) =>
       normalizeSpoken(c.id) === n ||
       normalizeSpoken(c.name || "") === n ||
       normalizeSpoken(c.sourceName || "") === n ||
       normalizeSpoken(c.designation) === n,
   );
+  if (exact) return exact;
+  const numbered = n.match(/(?:character|personnage|perso|char)\s*0*(\d+)/);
+  if (numbered?.[1]) {
+    const id = `CHARACTER_${numbered[1].padStart(2, "0")}`;
+    const byId = characters.find((c) => c.id === id);
+    if (byId) return byId;
+  }
+  const token = n.split(" ")[0] ?? "";
+  if (token.length < 3) return undefined;
+  const byFirst = characters.filter((c) => {
+    const names = [c.name, c.sourceName, c.designation]
+      .map((value) => normalizeSpoken(value || "").split(" ")[0] ?? "")
+      .filter((value) => value.length >= 3);
+    return names.includes(token);
+  });
+  return byFirst.length === 1 ? byFirst[0] : undefined;
 }
 
 export function displayCharacterName(character: CharacterSheet): string {
@@ -370,6 +659,19 @@ export function sealDialogueLines(
     return id;
   }
   return sorted.map((line, i) => {
+    if (line.speakerId === "NARRATOR" || isNarratorLabel(line.speakerId) || isNarratorLabel(line.speakerLabel)) {
+      return {
+        ...line,
+        id: takeId(line.id),
+        order: i + 1,
+        speakerId: "NARRATOR",
+        speakerLabel: "Narrateur",
+        displayText: (line.displayText || line.sourceText).trim(),
+        sourceText: line.sourceText.trim(),
+        attribution: "certain",
+        performance: line.performance ?? parsePerformance(line, line.emotion),
+      };
+    }
     const matched =
       matchCharacter(line.speakerId, roster) || matchCharacter(line.speakerLabel, roster);
     const speakerId = matched?.id ?? null;
@@ -443,6 +745,8 @@ export function parseDialogueLine(raw: unknown, index: number): DialogueLine {
     displayText:
       typeof o.displayText === "string" && o.displayText.trim() ? o.displayText.trim() : sourceText,
     timeHint: typeof o.timeHint === "string" ? o.timeHint : "",
+    startTime: typeof o.startTime === "number" ? o.startTime : parseClockToSeconds(String(o.startTime ?? o.t ?? "")) ?? undefined,
+    endTime: typeof o.endTime === "number" ? o.endTime : parseClockToSeconds(String(o.endTime ?? "")) ?? undefined,
     emotion: typeof o.emotion === "string" ? o.emotion : "",
     intention: typeof o.intention === "string" ? o.intention : "",
     confidence: parseConfidence(o.confidence),
@@ -461,7 +765,7 @@ export function emptyDialogueBible(): LockedDialogueBible {
   };
 }
 
-function lineFromUtterance(
+export function lineFromUtterance(
   text: string,
   index: number,
   sceneNumber: number,
@@ -469,19 +773,20 @@ function lineFromUtterance(
 ): DialogueLine {
   const tagged = parseTaggedReplica(text);
   const matched = matchCharacter(tagged.speaker, characters);
+  const narrator = isNarratorLabel(tagged.speaker);
   return {
     id: dialogueId(index),
     sceneNumber: Math.max(1, sceneNumber),
     order: index + 1,
-    speakerId: matched?.id ?? null,
-    speakerLabel: matched ? displayCharacterName(matched) : tagged.speaker || "",
+    speakerId: matched?.id ?? (narrator ? "NARRATOR" : null),
+    speakerLabel: matched ? displayCharacterName(matched) : narrator ? "Narrateur" : tagged.speaker || "",
     sourceText: tagged.text,
     displayText: tagged.text,
     timeHint: "",
     emotion: "",
     intention: "",
-    confidence: matched ? "clear" : "uncertain",
-    attribution: matched ? "certain" : "unverified",
+    confidence: matched || narrator ? "clear" : "uncertain",
+    attribution: matched || narrator ? "certain" : "unverified",
     performance: emptyPerformance(),
   };
 }
@@ -493,6 +798,8 @@ export function finalizeLockedDialogues(args: {
   sceneCount: number;
   language?: string | null;
   sourceHint?: LockedDialogueBible["source"];
+  durationSeconds?: number;
+  scenes?: SceneAnalysis[];
 }): LockedDialogueBible {
   const sceneCount = Math.max(1, args.sceneCount);
   const utterances = args.transcript ? utterancesFromTranscript(args.transcript) : [];
@@ -518,22 +825,44 @@ export function finalizeLockedDialogues(args: {
   let lines: DialogueLine[] = [];
 
   if (utterances.length) {
-    const used = new Set<number>();
+    const remaining = llmLines.map((_, idx) => idx);
     for (const [i, utterance] of utterances.entries()) {
-      const matchIdx = llmLines.findIndex(
-        (line, idx) => !used.has(idx) && isFaithfulToTranscript(line.sourceText, utterance),
-      );
-      const fallback = llmLines.findIndex(
-        (line, idx) => !used.has(idx) && isFaithfulToTranscript(utterance, line.sourceText),
-      );
-      const idx = matchIdx >= 0 ? matchIdx : fallback;
-      if (idx >= 0) {
-        used.add(idx);
-        const llm = llmLines[idx]!;
+      const tagged = parseTaggedReplica(utterance);
+      const spoken = tagged.text || utterance;
+      let bestIdx = -1;
+      let bestScore = 0.85;
+      for (const idx of remaining) {
+        const candidate = llmLines[idx]!;
+        const score = Math.max(
+          overlapScore(spoken, candidate.sourceText || candidate.displayText),
+          overlapScore(candidate.sourceText || candidate.displayText, spoken),
+        );
+        if (score > bestScore) {
+          bestScore = score;
+          bestIdx = idx;
+        }
+      }
+      if (bestIdx >= 0) {
+        remaining.splice(remaining.indexOf(bestIdx), 1);
+        const llm = llmLines[bestIdx]!;
+        const fromTag = matchCharacter(tagged.speaker, args.characters);
+        const fromLlm =
+          matchCharacter(llm.speakerId, args.characters) ||
+          matchCharacter(llm.speakerLabel, args.characters);
+        const narrator = isNarratorLabel(tagged.speaker || llm.speakerLabel || llm.speakerId);
         lines.push({
           ...llm,
-          sourceText: utterance,
-          displayText: utterance,
+          sourceText: spoken,
+          displayText: spoken,
+          speakerId: fromTag?.id ?? (narrator ? "NARRATOR" : fromLlm?.id ?? null),
+          speakerLabel: fromTag
+            ? displayCharacterName(fromTag)
+            : narrator
+              ? "Narrateur"
+              : fromLlm
+                ? displayCharacterName(fromLlm)
+                : tagged.speaker || llm.speakerLabel,
+          attribution: fromTag || narrator || fromLlm ? "certain" : "unverified",
           confidence: llm.confidence === "inaudible" ? "clear" : llm.confidence,
           sceneNumber: Math.min(sceneCount, Math.max(1, llm.sceneNumber || 1)),
           order: i + 1,
@@ -572,6 +901,21 @@ export function finalizeLockedDialogues(args: {
   ).lines;
 
   lines = mergeConsecutiveSpeakerTurns(lines);
+
+  const duration = args.durationSeconds && args.durationSeconds > 0 ? args.durationSeconds : args.sceneCount * 10;
+  if (args.transcript) {
+    const timed = timedUtterancesFromTranscript(args.transcript);
+    lines = lines.map((line) => {
+      const hit = timed.find(
+        (item) =>
+          isFaithfulToTranscript(line.sourceText, item.text) || isFaithfulToTranscript(item.text, line.sourceText),
+      );
+      if (!hit || (hit.startTime === 0 && hit.endTime === 0 && timed.every((t) => t.startTime === 0))) return line;
+      return { ...line, startTime: hit.startTime, endTime: hit.endTime, timeHint: `${formatClock(hit.startTime)} → ${formatClock(hit.endTime)}` };
+    });
+  }
+  lines = assignDialoguesToWindows(lines, duration);
+  lines = autoAssignSpeakers(lines, args.characters, args.scenes);
 
   return {
     language: args.language ?? null,
@@ -616,6 +960,14 @@ export function remapDialogueScenes(
     return lines.map((line) => ({
       ...line,
       sceneNumber: Math.min(nextSceneCount, Math.max(1, line.sceneNumber)),
+    }));
+  }
+  const uniqueScenes = new Set(lines.map((l) => l.sceneNumber)).size;
+  if (uniqueScenes <= 1 && nextSceneCount > 1) {
+    const n = lines.length;
+    return lines.map((line, i) => ({
+      ...line,
+      sceneNumber: Math.min(nextSceneCount, Math.floor((i * nextSceneCount) / Math.max(1, n)) + 1),
     }));
   }
   return lines.map((line) => {
@@ -680,7 +1032,12 @@ export function applyLinesToScenes(scenes: SceneAnalysis[], lines: DialogueLine[
 export function attachDialogues(
   analysis: VideoAnalysis,
   transcript: string | null,
+  durationSeconds?: number,
 ): VideoAnalysis {
+  const duration =
+    durationSeconds && durationSeconds > 0
+      ? durationSeconds
+      : analysis.scenes.reduce((n, s) => n + (Number(s.estimatedDuration) || 10), 0);
   const llmLines = analysis.dialogues?.lines ?? [];
   const fromScenes: DialogueLine[] = analysis.scenes.flatMap((scene, i) => {
     if (!scene.dialogue) return [];
@@ -688,7 +1045,9 @@ export function attachDialogues(
       const matched =
         matchCharacter(piece.speaker, analysis.characters) ||
         matchCharacter(scene.dialogueSpeaker, analysis.characters) ||
-        matchCharacter(scene.characters[0], analysis.characters);
+        (scene.characters.length === 1
+          ? matchCharacter(scene.characters[0], analysis.characters)
+          : undefined);
       const unverified = !piece.speaker && scene.characters.length !== 1;
       return {
         id: dialogueId(i * 10 + j),
@@ -714,6 +1073,8 @@ export function attachDialogues(
     sceneCount: Math.max(1, analysis.scenes.length),
     language: analysis.language,
     sourceHint: analysis.dialogues?.source ?? analysis.audio.source,
+    durationSeconds: duration,
+    scenes: analysis.scenes,
   });
   const scenes = applyLinesToScenes(analysis.scenes, bible.lines);
   const dialoguePresent = bible.lines.some((l) => l.sourceText.trim() && l.confidence !== "inaudible");
@@ -736,20 +1097,30 @@ export function attachDialogues(
 export function fitDialoguesToScenes(
   analysis: VideoAnalysis,
   previousSceneCount: number,
+  durationSeconds?: number,
 ): VideoAnalysis {
-  const lines = remapDialogueScenes(
+  const duration =
+    durationSeconds && durationSeconds > 0
+      ? durationSeconds
+      : analysis.scenes.reduce((n, s) => n + (Number(s.estimatedDuration) || 10), 0);
+  const remapped = remapDialogueScenes(
     analysis.dialogues?.lines ?? [],
     previousSceneCount,
     analysis.scenes.length,
   );
+  const assigned = autoAssignSpeakers(
+    assignDialoguesToWindows(remapped, duration),
+    analysis.characters,
+    analysis.scenes,
+  );
   const dialogues: LockedDialogueBible = {
     ...(analysis.dialogues ?? emptyDialogueBible()),
-    lines,
+    lines: assigned,
   };
   return {
     ...analysis,
     dialogues,
-    scenes: applyLinesToScenes(analysis.scenes, lines),
+    scenes: applyLinesToScenes(analysis.scenes, assigned),
   };
 }
 
@@ -845,15 +1216,6 @@ export function composeLockedVideoPrompt(args: {
     "Fidélité émotionnelle : larmes, cri, tremblement ou geste important décrits ci-dessus doivent être reproduits. Ne pas adoucir. Ne pas inventer.",
   );
 
-  const base = args.scene.videoPrompt?.trim() ?? "";
-  const cleaned = base
-    .replace(/PERSONNAGES PRÉSENTS DANS LA SCÈNE[\s\S]*$/i, "")
-    .replace(/DIALOGUES VERROUILLÉS[\s\S]*$/i, "")
-    .replace(/Scène en [\s\S]*$/i, "")
-    .trim();
-  if (cleaned && !/Identité verrouillée/i.test(cleaned)) {
-    return `${parts.join("\n")}\n\n${cleaned}`;
-  }
   return parts.join("\n");
 }
 
@@ -875,16 +1237,25 @@ export function enforceProductionDialogues(
     };
   }
 
-  const lines = remapDialogueScenes(
-    analysis.dialogues?.lines ?? [],
-    Math.max(1, analysis.scenes.length),
-    Math.max(1, production.scenes.length),
+  const lastSpoken = Math.max(
+    0,
+    ...(analysis.dialogues?.lines ?? []).map((line) => Number(line.endTime ?? line.startTime ?? 0)),
   );
-  const locked: VideoAnalysis = analysis;
+  const duration = inferSourceDuration(
+    analysis.scenes.reduce((n, s) => n + (Number(s.estimatedDuration) || 10), 0) || production.scenes.length * 10,
+    { lastDialogueTime: lastSpoken, segmentEnds: [Math.max(production.scenes.length, 1) * 10] },
+  );
+  const lines = assignDialoguesToWindows(
+    remapDialogueScenes(
+      analysis.dialogues?.lines ?? [],
+      Math.max(1, analysis.scenes.length),
+      Math.max(1, production.scenes.length),
+    ),
+    duration,
+  );
+  const locked: VideoAnalysis = { ...analysis, dialogues: { ...(analysis.dialogues ?? emptyDialogueBible()), lines } };
   const scenes: SceneProduction[] = production.scenes.map((scene) => {
-    const owned = lines
-      .filter((line) => line.sceneNumber === scene.number)
-      .sort((a, b) => a.order - b.order);
+    const owned = linesForScene(lines, scene.number);
     const fallback = formatLockedDialogue(owned);
     return {
       ...scene,
