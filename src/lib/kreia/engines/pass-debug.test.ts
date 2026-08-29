@@ -16,6 +16,7 @@ describe("formatDialoguePassDebug", () => {
     assert.match(text, /speakersAttempted=true/);
     assert.match(text, /speakersOk=true/);
     assert.match(text, /speakersMatched=4\/5/);
+    assert.match(text, /speakerSceneProgress=/);
     assert.match(text, /relationshipsAttempted=true/);
     assert.match(text, /relationshipsOk=false/);
     assert.match(text, /relationshipsFilled=0\/2/);

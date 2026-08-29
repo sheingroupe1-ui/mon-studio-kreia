@@ -52,6 +52,10 @@ export function AnalysisProgressView({
         <p className="mt-1 text-xs text-[var(--fg-subtle)]">
           Style choisi appliqué. Scènes et narration en cours.
         </p>
+      ) : typeof progress.speakerScenesDone === "number" && typeof progress.speakerScenesTotal === "number" ? (
+        <p className="mt-1 text-xs text-[var(--fg-subtle)]">
+          Attribution des dialogues — scène {progress.speakerScenesDone} / {progress.speakerScenesTotal}
+        </p>
       ) : typeof progress.productionScenesDone === "number" && typeof progress.productionScenesTotal === "number" ? (
         <p className="mt-1 text-xs text-[var(--fg-subtle)]">
           Génération des prompts — scène {progress.productionScenesDone} / {progress.productionScenesTotal}

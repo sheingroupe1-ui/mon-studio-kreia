@@ -15,18 +15,19 @@ import {
   fitDialoguesToScenes,
   formatLockedDialogue,
   lockCharactersSourceNames,
+  matchCharacter,
 } from "./engines/dialogues";
 import { analyzeStructure, fallbackStructure } from "./engines/structure";
 import { duplicateWarnings } from "./engines/cast-edit";
 import { briefCountWarning, formatUserBrief } from "./user-brief";
 import { styleFromUserChoice } from "./visual-styles";
-import { assignSpeakersWithLlm } from "./engines/speaker-assign";
 import { inferCharacterRelationships } from "./engines/relationships";
 import { emptyDialoguePassDebug, formatDialoguePassDebug } from "./engines/pass-debug";
 import { linesFromSegmentPayload, sliceTranscriptForWindow } from "./engines/transcript-slice";
 import { fruitHumanoidPromptBlock } from "./engines/fruit-humanoid";
 import { angelPromptBlock } from "./engines/angel";
 import { runProductionSlice } from "./engines/production";
+import { assignSpeakersForScene, assignSpeakersWithLlm } from "./engines/speaker-assign";
 import {
   chat,
   fail,
@@ -510,14 +511,22 @@ ${data.userNotes ?? ""}`,
     console.error("[SEGMENT] analysis failed, keeping local fallback", err);
   }
   const localChars = Array.isArray(rec.characters) ? rec.characters.map(String) : [];
-  const pool = localChars.length
-    ? characters.filter((c) => localChars.includes(c.id))
-    : characters;
+  const resolvedChars = [
+    ...new Set(
+      localChars
+        .map((raw) => matchCharacter(raw, characters)?.id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const pool =
+    resolvedChars.length >= 2
+      ? characters.filter((c) => resolvedChars.includes(c.id))
+      : characters;
   const dialogues = linesFromSegmentPayload(rec, {
     sceneNumber: i + 1,
     start: seg.start,
     end: seg.end,
-    characters: pool.length ? pool : characters,
+    characters: pool,
     transcriptSlice,
   });
   notes[i] = {
@@ -531,7 +540,7 @@ ${data.userNotes ?? ""}`,
     camera: typeof rec.camera === "string" ? rec.camera : "",
     lighting: typeof rec.lighting === "string" ? rec.lighting : "",
     audio: typeof rec.audio === "string" ? rec.audio : "",
-    characters: localChars.length ? localChars : dialogues.map((d) => d.speakerId).filter((id): id is string => Boolean(id)),
+    characters: resolvedChars.length >= 2 ? resolvedChars : characters.map((c) => c.id),
     dialogue: formatLockedDialogue(dialogues) || (typeof rec.dialogue === "string" ? rec.dialogue : null),
     dialogues,
     status: Object.keys(rec).length ? "ok" : "failed",
@@ -649,6 +658,8 @@ export async function runPipelineSlice(args: {
       castBatchesTotal: extra?.castBatchesTotal,
       productionScenesDone: extra?.productionScenesDone,
       productionScenesTotal: extra?.productionScenesTotal,
+      speakerScenesDone: extra?.speakerScenesDone,
+      speakerScenesTotal: extra?.speakerScenesTotal,
       debug: formatDialoguePassDebug(checkpoint.dialogueDebug) || extra?.debug,
     }),
     analysis: extra?.analysis,
@@ -775,20 +786,46 @@ export async function runPipelineSlice(args: {
     }
     case "speakers": {
       const debug = checkpoint.dialogueDebug ?? emptyDialoguePassDebug();
-      if (checkpoint.analysis) {
+      if (!checkpoint.analysis) {
+        debug.speakersError = "no-analysis";
+        checkpoint.dialogueDebug = debug;
+        return finish("relationships", 6);
+      }
+      const scenes = checkpoint.analysis.scenes ?? [];
+      const fromLines = [...new Set((checkpoint.analysis.dialogues?.lines ?? []).map((line) => line.sceneNumber))];
+      const sceneNumbers = scenes.length ? scenes.map((scene) => scene.number) : fromLines;
+      const total = Math.max(1, sceneNumbers.length);
+      const doneCount = checkpoint.analyzedSpeakerSceneCount ?? 0;
+      debug.speakerSceneProgress = `${Math.min(doneCount, total)}/${total}`;
+      checkpoint.dialogueDebug = debug;
+      if (doneCount < sceneNumbers.length) {
+        const sceneNumber = sceneNumbers[doneCount]!;
         try {
-          checkpoint.analysis = await assignSpeakersWithLlm(checkpoint.analysis, debug);
+          checkpoint.analysis = frames.length
+            ? await assignSpeakersForScene(checkpoint.analysis, sceneNumber, frames, debug)
+            : await assignSpeakersWithLlm(checkpoint.analysis, debug);
         } catch (err) {
           debug.speakersAttempted = true;
           debug.speakersOk = false;
           debug.speakersError = err instanceof Error ? err.message : String(err);
         }
+        checkpoint.analyzedSpeakerSceneCount = frames.length ? doneCount + 1 : sceneNumbers.length;
+        debug.speakerSceneProgress = `${checkpoint.analyzedSpeakerSceneCount}/${total}`;
         checkpoint.dialogueDebug = debug;
-      } else {
-        debug.speakersError = "no-analysis";
-        checkpoint.dialogueDebug = debug;
+        if ((checkpoint.analyzedSpeakerSceneCount ?? 0) < sceneNumbers.length) {
+          return finish("speakers", 6, {
+            analysis: checkpoint.analysis,
+            speakerScenesDone: checkpoint.analyzedSpeakerSceneCount,
+            speakerScenesTotal: total,
+          });
+        }
       }
-      return finish("relationships", 6, { analysis: checkpoint.analysis });
+      markCompleted(checkpoint, "speakers");
+      return finish("relationships", 6, {
+        analysis: checkpoint.analysis,
+        speakerScenesDone: total,
+        speakerScenesTotal: total,
+      });
     }
     case "relationships": {
       const debug = checkpoint.dialogueDebug ?? emptyDialoguePassDebug();

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { applySpeakerAssignments } from "./speaker-assign.ts";
+import { applySpeakerAssignments, candidateIdsForScene, parseSceneTimeWindow, pickFramesForScene } from "./speaker-assign.ts";
 import { emptyPerformance } from "./dialogues.ts";
-import type { CharacterSheet, DialogueLine } from "../types.ts";
+import type { CharacterSheet, DialogueLine, FrameCapture } from "../types.ts";
 
 function character(id: string, name: string): CharacterSheet {
   return {
@@ -105,5 +105,95 @@ describe("applySpeakerAssignments", () => {
     );
     assert.equal(out[0]?.speakerId, "CHARACTER_02");
     assert.equal(out[0]?.speakerLabel, "Jean");
+  });
+});
+
+describe("pickFramesForScene", () => {
+  it("picks frames inside the scene window", () => {
+    const jpeg = "data:image/jpeg;base64," + "A".repeat(40);
+    const frames: FrameCapture[] = [
+      { t: 1, dataUrl: jpeg },
+      { t: 5, dataUrl: jpeg },
+      { t: 12, dataUrl: jpeg },
+    ];
+    const picked = pickFramesForScene(
+      frames,
+      {
+        number: 1,
+        estimatedDuration: 10,
+        startHint: "0 → 10",
+        characters: ["CHARACTER_01"],
+        setting: "",
+        action: "",
+        emotion: "",
+        camera: "",
+        lighting: "",
+        audio: "",
+        dialogue: null,
+        dialogueSpeaker: null,
+        styleNotes: "",
+        confidence: "observed",
+        silentReactions: [],
+      },
+      [],
+    );
+    assert.equal(picked.length, 2);
+    assert.equal(picked[0]?.t, 1);
+    assert.equal(picked[1]?.t, 5);
+  });
+
+  it("parses MM:SS clocks used by the pipeline startHint", () => {
+    const window = parseSceneTimeWindow(
+      {
+        number: 2,
+        estimatedDuration: 10,
+        startHint: "00:10 → 00:20",
+        characters: [],
+        setting: "",
+        action: "",
+        emotion: "",
+        camera: "",
+        lighting: "",
+        audio: "",
+        dialogue: null,
+        dialogueSpeaker: null,
+        styleNotes: "",
+        confidence: "observed",
+        silentReactions: [],
+      },
+      [],
+    );
+    assert.equal(window.start, 10);
+    assert.equal(window.end, 20);
+  });
+});
+
+describe("candidateIdsForScene", () => {
+  it("does not keep a one-character dump when several people speak", () => {
+    const marie = character("CHARACTER_01", "Marie");
+    const jean = character("CHARACTER_02", "Jean");
+    const lea = character("CHARACTER_03", "Léa");
+    const ids = candidateIdsForScene(
+      {
+        number: 1,
+        estimatedDuration: 10,
+        startHint: "00:00 → 00:10",
+        characters: ["CHARACTER_01"],
+        setting: "",
+        action: "",
+        emotion: "",
+        camera: "",
+        lighting: "",
+        audio: "",
+        dialogue: null,
+        dialogueSpeaker: null,
+        styleNotes: "",
+        confidence: "observed",
+        silentReactions: [],
+      },
+      [marie, jean, lea],
+      [line("D001", "Tu savais.", null), line("D002", "Oui.", null)],
+    );
+    assert.deepEqual(ids.sort(), ["CHARACTER_01", "CHARACTER_02", "CHARACTER_03"]);
   });
 });

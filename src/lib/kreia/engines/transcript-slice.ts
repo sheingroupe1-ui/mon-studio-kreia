@@ -1,9 +1,12 @@
 import type { CharacterSheet, DialogueLine } from "../types.ts";
 import {
-  autoAssignSpeakers,
+  displayCharacterName,
   explodeMixedDialogue,
+  isNarratorLabel,
   lineFromUtterance,
+  matchCharacter,
   parseDialogueLine,
+  parseTaggedReplica,
   utterancesFromTranscript,
 } from "./dialogues.ts";
 
@@ -108,5 +111,36 @@ export function linesFromSegmentPayload(
         ? Math.min(args.end, Math.max(args.start, line.startTime))
         : args.start,
   }));
-  return autoAssignSpeakers(stamped, args.characters);
+  return stamped.map((line) => {
+    const tagged = parseTaggedReplica(line.sourceText || line.displayText);
+    const spoken = tagged.text || line.sourceText;
+    const fromTag = matchCharacter(tagged.speaker, args.characters);
+    if (fromTag) {
+      return {
+        ...line,
+        sourceText: spoken,
+        displayText: spoken,
+        speakerId: fromTag.id,
+        speakerLabel: displayCharacterName(fromTag),
+        attribution: "certain" as const,
+      };
+    }
+    if (isNarratorLabel(tagged.speaker || line.speakerLabel || line.speakerId)) {
+      return {
+        ...line,
+        sourceText: spoken,
+        displayText: spoken,
+        speakerId: "NARRATOR",
+        speakerLabel: "Narrateur",
+        attribution: "certain" as const,
+      };
+    }
+    return {
+      ...line,
+      sourceText: spoken,
+      speakerId: null,
+      speakerLabel: "",
+      attribution: "unverified" as const,
+    };
+  });
 }

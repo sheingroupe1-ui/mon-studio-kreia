@@ -1,6 +1,6 @@
 import { chat } from "../llm.ts";
 import { tryExtractJson } from "../parse.ts";
-import type { CharacterSheet, DialogueLine, VideoAnalysis } from "../types.ts";
+import type { CharacterSheet, DialogueLine, FrameCapture, SceneAnalysis, VideoAnalysis } from "../types.ts";
 import type { DialoguePassDebug } from "./pass-debug.ts";
 import {
   applyLinesToScenes,
@@ -8,6 +8,7 @@ import {
   isNarratorLabel,
   matchCharacter,
 } from "./dialogues.ts";
+import { parseLineTime } from "./transcript-slice.ts";
 
 export function applySpeakerAssignments(
   lines: DialogueLine[],
@@ -19,7 +20,7 @@ export function applySpeakerAssignments(
     const hit =
       assignments.find((item) => item.id && item.id === line.id) ??
       assignments.find((item) => item.order === line.order) ??
-      assignments[index];
+      (sceneCharactersByNumber ? undefined : assignments[index]);
     if (!hit) return line;
     if (isNarratorLabel(hit.speakerId) || isNarratorLabel(hit.speakerLabel)) {
       return {
@@ -65,6 +66,178 @@ function parseAssignments(raw: unknown): Array<{ id?: string; order?: number; sp
             ? item.speaker
             : undefined,
     }));
+}
+
+export function parseSceneTimeWindow(
+  scene: SceneAnalysis | undefined,
+  lines: DialogueLine[],
+): { start: number; end: number } {
+  const hint = scene?.startHint ?? "";
+  const parts = hint.split(/\s*(?:→|->|–|—)\s*/);
+  if (parts.length >= 2) {
+    const start =
+      parseLineTime(parts[0]!) ??
+      (Number.isFinite(Number.parseFloat(parts[0]!)) ? Number.parseFloat(parts[0]!) : null);
+    const end =
+      parseLineTime(parts[1]!) ??
+      (Number.isFinite(Number.parseFloat(parts[1]!)) ? Number.parseFloat(parts[1]!) : null);
+    if (start != null && end != null) {
+      return { start, end: end > start ? end : start + 10 };
+    }
+  }
+  const times = lines
+    .flatMap((line) => [line.startTime, line.endTime])
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (times.length) {
+    const start = Math.min(...times);
+    const end = Math.max(...times);
+    return { start, end: end > start ? end : start + 10 };
+  }
+  const number = Math.max(1, scene?.number ?? 1);
+  const start = (number - 1) * 10;
+  return { start, end: start + 10 };
+}
+
+export function candidateIdsForScene(
+  scene: SceneAnalysis | undefined,
+  characters: CharacterSheet[],
+  lines: DialogueLine[],
+): string[] {
+  const roster = characters.map((c) => c.id);
+  const listed = (scene?.characters ?? []).filter((id) => roster.includes(id));
+  if (listed.length >= 2) return listed;
+  if (roster.length >= 2 && lines.length >= 2) return roster;
+  return listed.length ? listed : roster;
+}
+
+export function pickFramesForScene(
+  frames: FrameCapture[],
+  scene: SceneAnalysis | undefined,
+  lines: DialogueLine[],
+): FrameCapture[] {
+  const usable = frames.filter(
+    (frame) => typeof frame.dataUrl === "string" && frame.dataUrl.startsWith("data:image/") && frame.dataUrl.length > 32,
+  );
+  if (!usable.length) return [];
+  const window = parseSceneTimeWindow(scene, lines);
+  const inWindow = usable.filter((frame) => frame.t >= window.start - 0.2 && frame.t <= window.end + 0.2);
+  if (inWindow.length === 1) return inWindow;
+  if (inWindow.length >= 2) return [inWindow[0]!, inWindow[inWindow.length - 1]!];
+  const mid = (window.start + window.end) / 2;
+  return [...usable].sort((a, b) => Math.abs(a.t - mid) - Math.abs(b.t - mid)).slice(0, 1);
+}
+
+function sceneImages(frames: FrameCapture[]) {
+  return frames.map((frame) => ({
+    type: "image_url" as const,
+    image_url: { url: frame.dataUrl, detail: "low" as const },
+  }));
+}
+
+function updateSpeakerDebug(analysis: VideoAnalysis, debug?: DialoguePassDebug, extra?: Partial<DialoguePassDebug>) {
+  if (!debug) return;
+  const lines = analysis.dialogues?.lines ?? [];
+  const matched = lines.filter((line) => Boolean(line.speakerId)).length;
+  debug.speakersMatched = `${matched}/${lines.length}`;
+  if (extra?.speakersAttempted !== undefined) debug.speakersAttempted = extra.speakersAttempted;
+  if (extra?.speakersOk !== undefined) debug.speakersOk = extra.speakersOk;
+  if (extra?.speakersError !== undefined) debug.speakersError = extra.speakersError;
+  if (extra?.speakerSceneProgress !== undefined) debug.speakerSceneProgress = extra.speakerSceneProgress;
+}
+
+export async function assignSpeakersForScene(
+  analysis: VideoAnalysis,
+  sceneNumber: number,
+  frames: FrameCapture[],
+  debug?: DialoguePassDebug,
+): Promise<VideoAnalysis> {
+  const allLines = analysis.dialogues?.lines ?? [];
+  const lines = allLines.filter((line) => line.sceneNumber === sceneNumber);
+  if (!lines.length) {
+    updateSpeakerDebug(analysis, debug, { speakersAttempted: debug?.speakersAttempted ?? false });
+    return analysis;
+  }
+  const scene = analysis.scenes.find((item) => item.number === sceneNumber);
+  const candidateIds = candidateIdsForScene(scene, analysis.characters ?? [], lines);
+  const characters = (analysis.characters ?? []).filter((c) => candidateIds.includes(c.id));
+  const sceneFrames = pickFramesForScene(frames, scene, lines);
+  updateSpeakerDebug(analysis, debug, { speakersAttempted: true });
+  const roster = characters.map((c) => ({
+    id: c.id,
+    name: c.name,
+    sourceName: c.sourceName,
+    designation: c.designation,
+    sex: c.sex,
+    role: c.role,
+  }));
+  const payload = lines.map((line) => ({
+    id: line.id,
+    order: line.order,
+    text: line.sourceText || line.displayText,
+    time: line.timeHint || line.startTime,
+  }));
+  const userContent = sceneFrames.length
+    ? [
+        {
+          type: "text" as const,
+          text: `PERSONNAGES : ${JSON.stringify(roster)}
+RÉPLIQUES DE CETTE SCÈNE : ${JSON.stringify(payload)}`,
+        },
+        ...sceneImages(sceneFrames),
+      ]
+    : `PERSONNAGES : ${JSON.stringify(roster)}
+RÉPLIQUES DE CETTE SCÈNE : ${JSON.stringify(payload)}`;
+  const result = await chat({
+    messages: [
+      {
+        role: "system",
+        content: `Tu attribues chaque réplique de CETTE SCÈNE au bon locuteur, en t'aidant
+des images fournies pour voir qui parle réellement (mouvement des lèvres, qui est tourné vers la caméra,
+attitude). Règles :
+- speakerId DOIT être l'un des personnages listés dans PERSONNAGES (ou "NARRATOR").
+- Utilise l'image en priorité pour trancher les cas ambigus, avant les règles de texte.
+- Si le transcript tague un nom, priorité à ce nom.
+- S'il ne reste que 2 personnages, une réponse courte ("Oui"/"Non") vient généralement de l'autre locuteur.
+- N'assigne JAMAIS un personnage absent de PERSONNAGES.
+JSON uniquement : { "assignments": [{ "id": "D001", "speakerId": "CHARACTER_01" }] }`,
+      },
+      {
+        role: "user",
+        content: userContent,
+      },
+    ],
+    maxTokens: 800,
+  });
+  if (!result.ok) {
+    console.info("[SPEAKERS] scene skip", sceneNumber, result.error);
+    updateSpeakerDebug(analysis, debug, { speakersOk: false, speakersError: result.error });
+    return analysis;
+  }
+  const parsed = tryExtractJson(result.text);
+  const sceneCharsMap = new Map([[sceneNumber, candidateIds]]);
+  const sceneAssigned = applySpeakerAssignments(
+    lines,
+    parseAssignments(parsed),
+    analysis.characters ?? [],
+    sceneCharsMap,
+  );
+  const byId = new Map(sceneAssigned.map((line) => [line.id, line]));
+  const merged = allLines.map((line) => byId.get(line.id) ?? line);
+  const next: VideoAnalysis = {
+    ...analysis,
+    dialogues: {
+      ...(analysis.dialogues ?? { language: null, source: "unavailable" as const, rawTranscript: null, lines: [] }),
+      lines: merged,
+    },
+    scenes: applyLinesToScenes(analysis.scenes, merged),
+  };
+  updateSpeakerDebug(next, debug, { speakersOk: true, speakersError: undefined });
+  console.info(
+    "[SPEAKERS] scene",
+    sceneNumber,
+    sceneAssigned.map((line) => `${line.id}:${line.speakerLabel}`).join(", "),
+  );
+  return next;
 }
 
 export async function assignSpeakersWithLlm(

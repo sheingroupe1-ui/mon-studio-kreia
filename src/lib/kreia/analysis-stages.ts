@@ -20,6 +20,8 @@ export type AnalysisProgress = {
   castBatchesTotal?: number;
   productionScenesDone?: number;
   productionScenesTotal?: number;
+  speakerScenesDone?: number;
+  speakerScenesTotal?: number;
   compact?: boolean;
   debug?: string;
 };
@@ -39,6 +41,8 @@ export function progressAt(step: number, extra?: Partial<AnalysisProgress>): Ana
   if (typeof extra?.castBatchesTotal === "number") progress.castBatchesTotal = extra.castBatchesTotal;
   if (typeof extra?.productionScenesDone === "number") progress.productionScenesDone = extra.productionScenesDone;
   if (typeof extra?.productionScenesTotal === "number") progress.productionScenesTotal = extra.productionScenesTotal;
+  if (typeof extra?.speakerScenesDone === "number") progress.speakerScenesDone = extra.speakerScenesDone;
+  if (typeof extra?.speakerScenesTotal === "number") progress.speakerScenesTotal = extra.speakerScenesTotal;
   if (extra?.debug) progress.debug = extra.debug;
   return progress;
 }

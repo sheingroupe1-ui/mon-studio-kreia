@@ -3,6 +3,7 @@ export type DialoguePassDebug = {
   speakersOk: boolean;
   speakersError?: string;
   speakersMatched: string;
+  speakerSceneProgress?: string;
   relationshipsAttempted: boolean;
   relationshipsOk: boolean;
   relationshipsError?: string;
@@ -14,6 +15,7 @@ export function emptyDialoguePassDebug(): DialoguePassDebug {
     speakersAttempted: false,
     speakersOk: false,
     speakersMatched: "0/0",
+    speakerSceneProgress: "0/0",
     relationshipsAttempted: false,
     relationshipsOk: false,
   };
@@ -26,6 +28,7 @@ export function formatDialoguePassDebug(debug?: DialoguePassDebug | null): strin
     `speakersOk=${debug.speakersOk}`,
     `speakersError=${debug.speakersError || "none"}`,
     `speakersMatched=${debug.speakersMatched}`,
+    `speakerSceneProgress=${debug.speakerSceneProgress ?? "0/0"}`,
     `relationshipsAttempted=${debug.relationshipsAttempted}`,
     `relationshipsOk=${debug.relationshipsOk}`,
     `relationshipsError=${debug.relationshipsError || "none"}`,

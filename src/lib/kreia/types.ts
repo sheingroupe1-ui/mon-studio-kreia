@@ -319,7 +319,7 @@ export type SegmentNote = {
 
 export type AnalysisCheckpoint = {
   version: 1;
-  completed: Array<"structure" | "cast" | "segments" | "narrative" | "produce">;
+  completed: Array<"structure" | "cast" | "segments" | "narrative" | "speakers" | "produce">;
   characters?: CharacterSheet[];
   visualStyle?: VisualStyleAnalysis;
   cinematic?: CinematicLanguage;
@@ -331,6 +331,7 @@ export type AnalysisCheckpoint = {
   analyzedSegmentCount: number;
   analyzedCastBatchCount?: number;
   analyzedProductionSceneCount?: number;
+  analyzedSpeakerSceneCount?: number;
   incomplete: boolean;
   failedStep?: string;
   failedMessage?: string;
