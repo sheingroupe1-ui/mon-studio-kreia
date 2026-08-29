@@ -160,15 +160,22 @@ export function DialogueBoard({
     commit(ordered);
   }
 
+  const transcriptFailed =
+    analysis.dialogues.source !== "transcript" ||
+    (typeof debug === "object" && debug?.transcriptOk === false);
+  const transcriptError = typeof debug === "object" ? debug?.transcriptError : undefined;
+  const transcriptBanner = transcriptFailed ? (
+    <p className="rounded-[var(--radius-md)] bg-[color-mix(in_oklab,var(--speaker-amber)_18%,transparent)] px-3 py-2 text-sm text-[var(--fg)]">
+      La transcription audio n’a pas fonctionné pour cette vidéo — le dialogue ci-dessous est une estimation basée sur l’analyse d’image, à vérifier avec plus d’attention que d’habitude.
+      {transcriptError ? ` (${transcriptError})` : ""}
+    </p>
+  ) : null;
+
   if (!lines.length) {
     return (
       <div className="space-y-3">
         <DialogueDebugPanel debug={debug} />
-        {analysis.dialogues.source !== "transcript" || (typeof debug === "object" && debug?.transcriptOk === false) ? (
-          <p className="rounded-[var(--radius-md)] bg-[color-mix(in_oklab,var(--speaker-amber)_18%,transparent)] px-3 py-2 text-sm text-[var(--fg)]">
-            La transcription audio n’a pas fonctionné pour cette vidéo — le dialogue ci-dessous est une estimation basée sur l’analyse d’image, à vérifier avec plus d’attention que d’habitude.
-          </p>
-        ) : null}
+        {transcriptBanner}
         <p className="text-sm text-[var(--fg-muted)]">
           Aucun dialogue identifiable. Rien n’a été inventé.
         </p>
@@ -183,18 +190,10 @@ export function DialogueBoard({
 
   const unverified = lines.filter((l) => l.attribution === "unverified" || !l.speakerId).length;
 
-  const transcriptFailed =
-    analysis.dialogues.source !== "transcript" ||
-    (typeof debug === "object" && debug?.transcriptOk === false);
-
   return (
     <div className="space-y-3">
       <DialogueDebugPanel debug={debug} />
-      {transcriptFailed ? (
-        <p className="rounded-[var(--radius-md)] bg-[color-mix(in_oklab,var(--speaker-amber)_18%,transparent)] px-3 py-2 text-sm text-[var(--fg)]">
-          La transcription audio n’a pas fonctionné pour cette vidéo — le dialogue ci-dessous est une estimation basée sur l’analyse d’image, à vérifier avec plus d’attention que d’habitude.
-        </p>
-      ) : null}
+      {transcriptBanner}
       <p className="text-xs text-[var(--fg-subtle)]">
         Référence source :{" "}
         {analysis.dialogues.source === "transcript"

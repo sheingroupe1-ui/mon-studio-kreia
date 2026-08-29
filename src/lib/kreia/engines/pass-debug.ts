@@ -30,7 +30,7 @@ export function formatDialoguePassDebug(debug?: DialoguePassDebug | null): strin
   return [
     `transcriptOk=${debug.transcriptOk}`,
     `transcriptNote=${debug.transcriptNote || "none"}`,
-    debug.transcriptError ? `transcriptError=${debug.transcriptError}` : "",
+    `transcriptError=${debug.transcriptError || "none"}`,
     `speakersAttempted=${debug.speakersAttempted}`,
     `speakersOk=${debug.speakersOk}`,
     `speakersError=${debug.speakersError || "none"}`,

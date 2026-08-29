@@ -3,6 +3,7 @@ import type { AudioChunk } from "./types";
 const SAMPLE_RATE = 16000;
 export const AUDIO_CHUNK_SECONDS = 5;
 export const AUDIO_MAX_CHUNKS = 12;
+const OVERLAP_SECONDS = 1;
 
 function writeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
   const n = samples.length;
@@ -99,18 +100,26 @@ export async function extractAudioChunks(
       decoded.duration,
       Number.isFinite(durationSeconds) ? durationSeconds : decoded.duration,
     );
+    const overallRms = rms(mixMonoRange(decoded, 0, total));
+    if (overallRms <= 0.0008) return [];
     const chunkLen = AUDIO_CHUNK_SECONDS;
     const count = Math.min(AUDIO_MAX_CHUNKS, Math.max(1, Math.ceil(total / chunkLen)));
     const chunks: AudioChunk[] = [];
     for (let i = 0; i < count; i += 1) {
-      const start = i * chunkLen;
-      if (start >= total - 0.2) break;
-      const end = Math.min(total, start + chunkLen);
-      const mono = mixMonoRange(decoded, start, end);
-      if (rms(mono) < 0.004) continue;
+      const ownStart = i * chunkLen;
+      if (ownStart >= total - 0.2) break;
+      const ownEnd = Math.min(total, ownStart + chunkLen);
+      const paddedStart = Math.max(0, ownStart - OVERLAP_SECONDS);
+      const paddedEnd = Math.min(total, ownEnd + OVERLAP_SECONDS);
+      const mono = mixMonoRange(decoded, paddedStart, paddedEnd);
       const resampled = resample(mono, decoded.sampleRate, SAMPLE_RATE);
       const wav = writeWav(resampled, SAMPLE_RATE);
-      chunks.push({ t: start, wavBase64: bytesToBase64(wav) });
+      chunks.push({
+        t: paddedStart,
+        ownStart,
+        ownEnd,
+        wavBase64: bytesToBase64(wav),
+      });
     }
     return chunks;
   } catch {

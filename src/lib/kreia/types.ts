@@ -368,6 +368,8 @@ export type KreiaProject = {
 
 export type AudioChunk = {
   t: number;
+  ownStart?: number;
+  ownEnd?: number;
   wavBase64: string;
 };
 

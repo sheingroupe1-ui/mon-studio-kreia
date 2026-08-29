@@ -185,9 +185,11 @@ function contentFromCompletion(json: unknown): string {
   return fromMessage(rec.message);
 }
 
+export type SttWord = { text?: string; start?: number; speaker?: string | number };
+
 export async function transcribeWav(
   audioWavBase64: string,
-): Promise<{ text: string | null; note: string; ok: boolean; error?: string }> {
+): Promise<{ text: string | null; note: string; ok: boolean; error?: string; words?: SttWord[] }> {
   const key = apiKey();
   if (!key) return { text: null, note: "Transcription indisponible.", ok: false, error: "no-api-key" };
 
@@ -221,16 +223,18 @@ export async function transcribeWav(
     const json = (await res.json()) as {
       text?: string;
       transcript?: string;
-      words?: Array<{ text?: string; start?: number; speaker?: string | number }>;
+      words?: SttWord[];
     };
-    const fromWords = formatSttWords(json.words);
+    const words = Array.isArray(json.words) ? json.words : [];
+    const fromWords = formatSttWords(words);
     const text = (fromWords || json.text || json.transcript || "").trim();
-    if (text) return { text, note: "Transcription obtenue.", ok: true };
+    if (text) return { text, note: "Transcription obtenue.", ok: true, words };
     return {
       text: null,
       note: "La piste audio n'a pas pu être transcrite. L'analyse se base sur les images.",
       ok: false,
       error: "empty-transcript",
+      words,
     };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
@@ -244,9 +248,7 @@ export async function transcribeWav(
   }
 }
 
-function formatSttWords(
-  words?: Array<{ text?: string; start?: number; speaker?: string | number }>,
-): string {
+export function formatSttWords(words?: SttWord[]): string {
   if (!Array.isArray(words) || !words.length) return "";
   const lines: string[] = [];
   let current: { t: number; speaker: string; texts: string[] } | null = null;
@@ -269,6 +271,24 @@ function formatSttWords(
   }
   flush();
   return lines.join("\n");
+}
+
+export function keepWordsInOwnWindow(
+  words: SttWord[] | undefined,
+  chunk: { t: number; ownStart?: number; ownEnd?: number },
+  chunkSeconds = 5,
+): SttWord[] {
+  const ownStart = chunk.ownStart ?? chunk.t;
+  const ownEnd = chunk.ownEnd ?? chunk.t + chunkSeconds;
+  return (words ?? [])
+    .map((word) => {
+      const relative = typeof word.start === "number" ? word.start : 0;
+      return { ...word, start: chunk.t + relative };
+    })
+    .filter((word) => {
+      const abs = word.start ?? chunk.t;
+      return abs >= ownStart - 0.05 && abs < ownEnd + 0.05;
+    });
 }
 
 export async function timedFetchPublic(

@@ -31,6 +31,8 @@ import { assignSpeakersForScene, assignSpeakersWithLlm } from "./engines/speaker
 import {
   chat,
   fail,
+  formatSttWords,
+  keepWordsInOwnWindow,
   INVALID_AI_MESSAGE,
   NETWORK_MESSAGE,
   transcribeWav,
@@ -196,9 +198,17 @@ async function collectTranscript(
       const results = await Promise.all(batch.map((chunk) => transcribeWav(chunk.wavBase64)));
       batch.forEach((chunk, idx) => {
         const result = results[idx];
-        const text = result?.text;
-        if (text) parts.push(`[${chunk.t.toFixed(1)}s] ${text}`);
-        else if (result?.error) lastError = result.error;
+        if (result?.words?.length) {
+          const kept = keepWordsInOwnWindow(result.words, chunk);
+          const text = formatSttWords(kept);
+          if (text) parts.push(text);
+          return;
+        }
+        if (result?.text) {
+          parts.push(`[${(chunk.ownStart ?? chunk.t).toFixed(1)}s] ${result.text}`);
+          return;
+        }
+        if (result?.error) lastError = result.error;
       });
     }
     if (parts.length) return { text: parts.join("\n"), note: "Transcription obtenue.", ok: true };
