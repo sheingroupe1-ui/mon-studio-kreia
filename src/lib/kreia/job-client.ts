@@ -203,6 +203,8 @@ async function runAnalyzeChunked<T extends { ok: true }>(
         op: "audio",
         id: created.id,
         t: chunk.t,
+        ownStart: chunk.ownStart,
+        ownEnd: chunk.ownEnd,
         wav: chunk.wavBase64,
       });
     } catch (err) {

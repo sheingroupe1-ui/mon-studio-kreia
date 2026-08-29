@@ -71,7 +71,7 @@ const MAX_AGE_MS = 30 * 60_000;
 const MAX_JOB_FRAMES = 12;
 const MAX_JPEG_CHARS = 80_000;
 const MAX_JOB_AUDIO = 12;
-const MAX_AUDIO_CHUNK_CHARS = 240_000;
+const MAX_AUDIO_CHUNK_CHARS = 400_000;
 const LOCK_HOLD_MS = 150_000;
 const STORE_KEY = Symbol.for("kreia.jobs.v3");
 
@@ -508,6 +508,7 @@ export async function appendAudio(
   id: string,
   t: number,
   wav: string,
+  bounds?: { ownStart?: number; ownEnd?: number },
 ): Promise<{ ok: true; snapshot: JobSnapshot } | { ok: false; error: string; status?: number }> {
   await prune();
   const job = await load(id);
@@ -519,8 +520,11 @@ export async function appendAudio(
     return { ok: false, error: "Piste audio illisible ou trop lourde." };
   }
   const time = Number(t);
+  const start = Number.isFinite(time) ? time : job.audioChunks.length * 8;
   job.audioChunks.push({
-    t: Number.isFinite(time) ? time : job.audioChunks.length * 8,
+    t: start,
+    ownStart: typeof bounds?.ownStart === "number" ? bounds.ownStart : start,
+    ownEnd: typeof bounds?.ownEnd === "number" ? bounds.ownEnd : start + 5,
     wavBase64: raw,
   });
   await flush(job);

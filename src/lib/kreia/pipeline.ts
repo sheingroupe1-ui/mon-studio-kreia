@@ -223,7 +223,12 @@ async function collectTranscript(
     const tr = await transcribeWav(data.audioWavBase64);
     return { text: tr.text, note: tr.note, ok: tr.ok, error: tr.error };
   }
-  return { text: null, note: "Aucune piste audio extraite.", ok: false, error: "no-audio" };
+  return {
+    text: null,
+    note: "Aucune piste audio extraite.",
+    ok: false,
+    error: `no-audio (chunks=${(data.audioChunks ?? []).length})`,
+  };
 }
 
 function emptyCheckpoint(): AnalysisCheckpoint {

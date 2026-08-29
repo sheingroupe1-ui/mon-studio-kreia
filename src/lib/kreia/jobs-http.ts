@@ -76,7 +76,10 @@ export async function handleKreiaJobsRequest(request: Request): Promise<Response
   if (op === "audio") {
     const id = typeof rec.id === "string" ? rec.id : "";
     const wav = typeof rec.wav === "string" ? rec.wav : "";
-    const added = await appendAudio(id, Number(rec.t), wav);
+    const added = await appendAudio(id, Number(rec.t), wav, {
+      ownStart: typeof rec.ownStart === "number" ? rec.ownStart : undefined,
+      ownEnd: typeof rec.ownEnd === "number" ? rec.ownEnd : undefined,
+    });
     if (!added.ok) return json({ ok: false, error: added.error }, added.status ?? 400);
     return json(added.snapshot);
   }
