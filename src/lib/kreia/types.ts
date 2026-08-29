@@ -377,6 +377,7 @@ export type AnalyzeInput = {
   frames: FrameCapture[];
   audioWavBase64?: string | null;
   audioChunks?: AudioChunk[];
+  audioExtractError?: string;
   durationSeconds: number;
   width: number;
   height: number;

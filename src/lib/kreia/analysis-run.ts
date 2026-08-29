@@ -1,5 +1,6 @@
 import { progressAt, type AnalysisProgress } from "./analysis-stages";
 import { extractAudioChunks } from "./audio";
+import { emptyDialoguePassDebug } from "./engines/pass-debug";
 import { extractFrames, loadVideoElement, MAX_FRAMES, toAnalysisFrames } from "./frames";
 import { isPostTransportError, runKreiaJob } from "./job-client";
 import { fitAnalyzePayload, logKreia, logKreiaError } from "./rpc";
@@ -165,14 +166,28 @@ export async function runFullVideoAnalysis(input: AnalysisRunInput): Promise<Ana
       maxFrames: MAX_FRAMES,
     });
     let audioChunks: AudioChunk[] = [];
-    if (input.file && !(input.resume && checkpoint.transcript)) {
-      try {
-        audioChunks = await extractAudioChunks(input.file, input.meta.durationSeconds);
-      } catch (err) {
-        logKreiaError("analyze:audio", err);
-        audioChunks = [];
-      }
+    let audioExtractError: string | undefined;
+    if (!(input.resume && checkpoint.transcript)) {
+      const extractedAudio = await extractAudioChunks(
+        input.file,
+        input.meta.durationSeconds,
+        input.objectUrl,
+      );
+      audioChunks = extractedAudio.chunks;
+      audioExtractError = extractedAudio.error;
+      if (audioExtractError) logKreiaError("analyze:audio", audioExtractError);
     }
+    checkpoint.dialogueDebug = {
+      ...emptyDialoguePassDebug(),
+      ...checkpoint.dialogueDebug,
+      transcriptOk: Boolean(checkpoint.transcript),
+      transcriptNote: checkpoint.transcript
+        ? checkpoint.transcriptNote
+        : audioChunks.length
+          ? `${audioChunks.length} extraits audio`
+          : audioExtractError,
+      transcriptError: audioExtractError || (audioChunks.length ? `client-extracted:${audioChunks.length}` : "no-audio.v16"),
+    };
 
     let projectId = input.currentProjectId ?? "";
     if (!input.resume || !projectId) {
@@ -212,6 +227,7 @@ export async function runFullVideoAnalysis(input: AnalysisRunInput): Promise<Ana
           userBrief: input.brief,
           chosenStyleId: input.chosenStyleId,
           chosenStyleText: input.chosenStyleText,
+          audioExtractError,
           checkpoint,
         },
         (p) => {

@@ -223,11 +223,12 @@ async function collectTranscript(
     const tr = await transcribeWav(data.audioWavBase64);
     return { text: tr.text, note: tr.note, ok: tr.ok, error: tr.error };
   }
+  const extracted = typeof data.audioExtractError === "string" ? data.audioExtractError.trim() : "";
   return {
     text: null,
     note: "Aucune piste audio extraite.",
     ok: false,
-    error: `no-audio (chunks=${(data.audioChunks ?? []).length})`,
+    error: extracted || `no-audio.v16 (chunks=${(data.audioChunks ?? []).length})`,
   };
 }
 
@@ -740,7 +741,7 @@ export async function runPipelineSlice(args: {
     }
     case "transcript": {
       const debug = checkpoint.dialogueDebug ?? emptyDialoguePassDebug();
-      if (!checkpoint.transcript && !checkpoint.transcriptNote) {
+      if (!checkpoint.transcript) {
         try {
           const transcribed = await collectTranscript(data, checkpoint);
           checkpoint.transcript = transcribed.text;

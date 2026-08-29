@@ -197,6 +197,7 @@ async function runAnalyzeChunked<T extends { ok: true }>(
   if (!uploaded) {
     throw new JobTransportError(TRANSPORT_MESSAGE, "post");
   }
+  let audioUploaded = 0;
   for (const chunk of payload.audioChunks ?? []) {
     try {
       await postOp({
@@ -207,12 +208,17 @@ async function runAnalyzeChunked<T extends { ok: true }>(
         ownEnd: chunk.ownEnd,
         wav: chunk.wavBase64,
       });
+      audioUploaded += 1;
     } catch (err) {
       logKreiaError("job:audio-chunk", err);
       if (isPostTransportError(err)) break;
-      throw err;
     }
   }
+  const extractError =
+    payload.audioExtractError ||
+    ((payload.audioChunks?.length ?? 0) > 0 && audioUploaded === 0
+      ? "audio-upload-failed"
+      : undefined);
   const meta = {
     durationSeconds: payload.durationSeconds,
     width: payload.width,
@@ -223,6 +229,7 @@ async function runAnalyzeChunked<T extends { ok: true }>(
     checkpoint: payload.checkpoint,
     chosenStyleId: payload.chosenStyleId,
     chosenStyleText: payload.chosenStyleText,
+    audioExtractError: extractError,
   };
   const started = await postOp({ op: "start", id: created.id, payload: meta });
   logKreia("job:started", { id: started.id, frames: started.frameCount });
