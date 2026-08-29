@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { DialogueDebugPanel } from "@/components/kreia/analysis-progress.tsx";
 import {
   applyDialogueEdits,
   dialogueCharCount,
@@ -11,6 +12,7 @@ import {
   reassignDialogueSpeaker,
   swatchForCharacter,
 } from "@/lib/kreia/engines/dialogues";
+import type { DialoguePassDebug } from "@/lib/kreia/engines/pass-debug";
 import type { CharacterSheet, DialogueLine, DialoguePerformance, VideoAnalysis } from "@/lib/kreia/types";
 import { cn } from "@/lib/utils";
 
@@ -123,11 +125,13 @@ export function DialogueBoard({
   onChange,
   onValidate,
   validating,
+  debug,
 }: {
   analysis: VideoAnalysis;
   onChange?: (next: VideoAnalysis) => void;
   onValidate?: () => void;
   validating?: boolean;
+  debug?: DialoguePassDebug | string | null;
 }) {
   const lines = (analysis.dialogues?.lines ?? [])
     .slice()
@@ -153,6 +157,7 @@ export function DialogueBoard({
   if (!lines.length) {
     return (
       <div className="space-y-3">
+        <DialogueDebugPanel debug={debug} />
         <p className="text-sm text-[var(--fg-muted)]">
           Aucun dialogue identifiable. Rien n’a été inventé.
         </p>
@@ -169,6 +174,7 @@ export function DialogueBoard({
 
   return (
     <div className="space-y-3">
+      <DialogueDebugPanel debug={debug} />
       <p className="text-xs text-[var(--fg-subtle)]">
         Référence source :{" "}
         {analysis.dialogues.source === "transcript"

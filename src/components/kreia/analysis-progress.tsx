@@ -1,7 +1,30 @@
 import { LoaderCircle } from "lucide-react";
 import { ANALYSIS_STEPS, type AnalysisProgress } from "@/lib/kreia/analysis-stages";
+import { formatDialoguePassDebug, type DialoguePassDebug } from "@/lib/kreia/engines/pass-debug";
 import { IDEA_STEPS } from "@/lib/kreia/idea-stages";
 import { cn } from "@/lib/utils";
+
+export function DialogueDebugPanel({
+  debug,
+}: {
+  debug?: DialoguePassDebug | string | null;
+}) {
+  const text = typeof debug === "string" ? debug.trim() : formatDialoguePassDebug(debug).trim();
+  if (!text) return null;
+  return (
+    <div className="mt-3 rounded-[var(--radius-md)] bg-[var(--bg)] p-3">
+      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--fg-subtle)]">
+        Diagnostic attribution
+      </p>
+      <pre className="mt-2 select-all whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-[var(--fg)]">
+        {text}
+      </pre>
+      <p className="mt-2 text-[11px] text-[var(--fg-subtle)]">
+        Sélectionnez ce texte et copiez-le si l’attribution est incorrecte.
+      </p>
+    </div>
+  );
+}
 
 export function AnalysisProgressView({
   progress,
@@ -44,9 +67,7 @@ export function AnalysisProgressView({
       ) : (
         <p className="mt-1 text-xs text-[var(--fg-subtle)]">Étape en cours.</p>
       )}
-      {progress.debug && mode === "video" ? (
-        <p className="mt-2 break-all font-mono text-[10px] text-[var(--fg-subtle)]">{progress.debug}</p>
-      ) : null}
+      {mode === "video" ? <DialogueDebugPanel debug={progress.debug} /> : null}
       <ol className="mt-4 space-y-1.5">
         {steps.map((item, i) => {
           const n = i + 1;

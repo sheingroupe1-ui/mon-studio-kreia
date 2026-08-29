@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { runFullVideoAnalysis } from "@/lib/kreia/analysis-run";
 import { progressAt, type AnalysisProgress } from "@/lib/kreia/analysis-stages";
+import { formatDialoguePassDebug } from "@/lib/kreia/engines/pass-debug";
 import { probeVideoUrl } from "@/lib/kreia/ai";
 import {
   formatDuration,
@@ -249,7 +250,12 @@ function NewProject() {
         setReviewAnalysis(result.analysis);
         setReviewingDialogues(true);
         setReviewProjectId(result.projectId);
-        setProgress(progressAt(6));
+        setProgress({
+          ...progressAt(6),
+          debug:
+            formatDialoguePassDebug(result.checkpoint?.dialogueDebug) ||
+            progress?.debug,
+        });
         await patchCurrent({
           status: "analyzing",
           analysis: result.analysis,
@@ -603,6 +609,7 @@ function NewProject() {
               <div className="rounded-[24px] bg-[var(--bg-elevated)] p-5 shadow-[var(--shadow-border)]">
                 <DialogueBoard
                   analysis={reviewAnalysis}
+                  debug={checkpoint?.dialogueDebug}
                   validating={busy}
                   onChange={setReviewAnalysis}
                   onValidate={() => {

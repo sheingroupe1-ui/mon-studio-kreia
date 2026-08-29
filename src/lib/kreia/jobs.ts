@@ -211,6 +211,8 @@ function progressForPhase(phase: PipelinePhase): AnalysisProgress {
   if (phase === "compact") return progressAt(5, { compact: true });
   if (phase === "segment") return progressAt(5);
   if (phase === "narrative") return progressAt(6);
+  if (phase === "speakers") return progressAt(6);
+  if (phase === "relationships") return progressAt(6);
   if (phase === "produce") return progressAt(7);
   return progressAt(7);
 }
@@ -225,6 +227,8 @@ function isPhase(value: unknown): value is PipelinePhase {
     value === "compact" ||
     value === "segment" ||
     value === "narrative" ||
+    value === "speakers" ||
+    value === "relationships" ||
     value === "produce" ||
     value === "done"
   );

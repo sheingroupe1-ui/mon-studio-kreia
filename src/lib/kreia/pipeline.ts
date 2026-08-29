@@ -130,35 +130,6 @@ function applyDurationFit(
   return fitDialoguesToScenes(next, before, duration || durationSeconds);
 }
 
-async function finalizeAnalysisDialogues(
-  analysis: VideoAnalysis,
-  durationSeconds: number,
-  transcript: string | null,
-  opts?: { refit?: boolean; checkpoint?: AnalysisCheckpoint },
-): Promise<VideoAnalysis> {
-  const debug = emptyDialoguePassDebug();
-  let next =
-    opts?.refit === false ? analysis : applyDurationFit(analysis, durationSeconds, transcript);
-  try {
-    next = await assignSpeakersWithLlm(next, debug);
-  } catch (err) {
-    console.error("[SPEAKERS] fallback heuristics", err);
-    debug.speakersAttempted = true;
-    debug.speakersOk = false;
-    debug.speakersError = err instanceof Error ? err.message : String(err);
-  }
-  try {
-    next = await inferCharacterRelationships(next, debug);
-  } catch (err) {
-    console.error("[RELATIONSHIPS] skip", err);
-    debug.relationshipsAttempted = true;
-    debug.relationshipsOk = false;
-    debug.relationshipsError = err instanceof Error ? err.message : String(err);
-  }
-  if (opts?.checkpoint) opts.checkpoint.dialogueDebug = debug;
-  return next;
-}
-
 function analysisFromCheckpoint(
   checkpoint: AnalysisCheckpoint,
   data: AnalyzeInput,
@@ -259,6 +230,8 @@ export type PipelinePhase =
   | "compact"
   | "segment"
   | "narrative"
+  | "speakers"
+  | "relationships"
   | "produce"
   | "done";
 
@@ -405,11 +378,10 @@ ${JSON.stringify(checkpoint.visualStyle ?? styleFromUserChoice(data.chosenStyleI
     };
   }
   if (!result || !result.ok) {
-    const analysis = await finalizeAnalysisDialogues(
+    const analysis = applyDurationFit(
       analysisFromCheckpoint(checkpoint, data, transcript, transcriptNote),
       data.durationSeconds,
       transcript,
-      { refit: false, checkpoint },
     );
     markCompleted(checkpoint, "segments");
     markCompleted(checkpoint, "narrative");
@@ -431,7 +403,7 @@ ${JSON.stringify(checkpoint.visualStyle ?? styleFromUserChoice(data.chosenStyleI
     if (!analysis.observedSummary) {
       analysis.observedSummary = checkpoint.observedSummary || "Contenu observé à partir des photogrammes.";
     }
-    analysis = await finalizeAnalysisDialogues(analysis, data.durationSeconds, transcript, { checkpoint });
+    analysis = applyDurationFit(analysis, data.durationSeconds, transcript);
     markCompleted(checkpoint, "segments");
     markCompleted(checkpoint, "narrative");
     checkpoint.incomplete = false;
@@ -441,16 +413,15 @@ ${JSON.stringify(checkpoint.visualStyle ?? styleFromUserChoice(data.chosenStyleI
       let analysis = await parseOrRepair(result.text);
       if (known.length) analysis.characters = known;
       if (!analysis.audio.notes) analysis.audio.notes = transcriptNote;
-      analysis = await finalizeAnalysisDialogues(analysis, data.durationSeconds, transcript, { checkpoint });
+      analysis = applyDurationFit(analysis, data.durationSeconds, transcript);
       markCompleted(checkpoint, "segments");
       markCompleted(checkpoint, "narrative");
       return analysis;
     } catch {
-      const analysis = await finalizeAnalysisDialogues(
+      const analysis = applyDurationFit(
         analysisFromCheckpoint(checkpoint, data, transcript, transcriptNote),
         data.durationSeconds,
         transcript,
-        { refit: false, checkpoint },
       );
       markCompleted(checkpoint, "segments");
       markCompleted(checkpoint, "narrative");
@@ -636,10 +607,6 @@ async function runNarrativeStep(
   if (checkpoint.visualStyle) analysis.visualStyle = checkpoint.visualStyle;
   analysis.sceneCountEstimate = scenes.length;
   analysis = fitDialoguesToScenes(analysis, scenes.length, duration || data.durationSeconds);
-  analysis = await finalizeAnalysisDialogues(analysis, duration || data.durationSeconds, transcript, {
-    refit: false,
-    checkpoint,
-  });
   markCompleted(checkpoint, "narrative");
   checkpoint.incomplete = false;
   return analysis;
@@ -789,15 +756,7 @@ export async function runPipelineSlice(args: {
         checkpoint.analysis = await runCompactStep(data, frames, checkpoint);
       }
       console.info("[PIPELINE] compact COMPLETE");
-      if (!checkpoint.dialoguesValidated) {
-        return finish("produce", 6, {
-          compact: true,
-          analysis: checkpoint.analysis,
-          awaitingDialogueReview: true,
-          done: true,
-        });
-      }
-      return finish("produce", 7, { compact: true, analysis: checkpoint.analysis });
+      return finish("speakers", 6, { compact: true, analysis: checkpoint.analysis });
     }
     case "segment": {
       await runOneSegment(data, frames, checkpoint);
@@ -811,6 +770,37 @@ export async function runPipelineSlice(args: {
     case "narrative": {
       if (!checkpoint.analysis) {
         checkpoint.analysis = await runNarrativeStep(data, frames, checkpoint);
+      }
+      return finish("speakers", 6, { analysis: checkpoint.analysis });
+    }
+    case "speakers": {
+      const debug = checkpoint.dialogueDebug ?? emptyDialoguePassDebug();
+      if (checkpoint.analysis) {
+        try {
+          checkpoint.analysis = await assignSpeakersWithLlm(checkpoint.analysis, debug);
+        } catch (err) {
+          debug.speakersAttempted = true;
+          debug.speakersOk = false;
+          debug.speakersError = err instanceof Error ? err.message : String(err);
+        }
+        checkpoint.dialogueDebug = debug;
+      } else {
+        debug.speakersError = "no-analysis";
+        checkpoint.dialogueDebug = debug;
+      }
+      return finish("relationships", 6, { analysis: checkpoint.analysis });
+    }
+    case "relationships": {
+      const debug = checkpoint.dialogueDebug ?? emptyDialoguePassDebug();
+      if (checkpoint.analysis) {
+        try {
+          checkpoint.analysis = await inferCharacterRelationships(checkpoint.analysis, debug);
+        } catch (err) {
+          debug.relationshipsAttempted = true;
+          debug.relationshipsOk = false;
+          debug.relationshipsError = err instanceof Error ? err.message : String(err);
+        }
+        checkpoint.dialogueDebug = debug;
       }
       if (!checkpoint.dialoguesValidated) {
         return finish("produce", 6, {
