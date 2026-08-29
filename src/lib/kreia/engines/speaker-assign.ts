@@ -13,6 +13,7 @@ export function applySpeakerAssignments(
   lines: DialogueLine[],
   assignments: Array<{ id?: string; order?: number; speakerId?: string; speakerLabel?: string }>,
   characters: CharacterSheet[],
+  sceneCharactersByNumber?: Map<number, string[]>,
 ): DialogueLine[] {
   return lines.map((line, index) => {
     const hit =
@@ -31,6 +32,8 @@ export function applySpeakerAssignments(
     const matched =
       matchCharacter(hit.speakerId, characters) || matchCharacter(hit.speakerLabel, characters);
     if (!matched) return line;
+    const candidatesForLine = sceneCharactersByNumber?.get(line.sceneNumber);
+    if (candidatesForLine?.length && !candidatesForLine.includes(matched.id)) return line;
     return {
       ...line,
       speakerId: matched.id,
@@ -88,15 +91,26 @@ export async function assignSpeakersWithLlm(
     sourceName: c.sourceName,
     designation: c.designation,
     sex: c.sex,
+    role: c.role,
     prominence: c.prominence,
   }));
-  const payload = lines.map((line) => ({
-    id: line.id,
-    order: line.order,
-    text: line.sourceText || line.displayText,
-    time: line.timeHint || line.startTime,
-    hint: line.speakerLabel || line.speakerId,
-  }));
+  const rosterIds = roster.map((r) => r.id);
+  const sceneCharactersByNumber = new Map(
+    (analysis.scenes ?? []).map((s) => [s.number, (s.characters ?? []).filter(Boolean)]),
+  );
+  const payload = lines.map((line) => {
+    const present = sceneCharactersByNumber.get(line.sceneNumber);
+    const candidates = present?.length ? present : rosterIds;
+    return {
+      id: line.id,
+      order: line.order,
+      text: line.sourceText || line.displayText,
+      time: line.timeHint || line.startTime,
+      hint: line.speakerLabel || line.speakerId,
+      sceneNumber: line.sceneNumber,
+      candidates,
+    };
+  });
   const result = await chat({
     messages: [
       {
@@ -105,10 +119,11 @@ export async function assignSpeakersWithLlm(
 Règles :
 - Ne change JAMAIS le texte des répliques.
 - speakerId = l'ID fourni du personnage qui PRONONCE la réplique, ou "NARRATOR" pour une voix off.
-- Si le transcript tague "Marie : …", Marie dit cette réplique.
+- Pour chaque réplique, le champ "candidates" liste les SEULS personnages présents dans cette scène. speakerId DOIT être l'un de ces candidats (ou "NARRATOR"). N'assigne JAMAIS un personnage absent de cette scène, même s'il existe ailleurs dans le projet.
+- Si le transcript tague clairement un nom ("Marie : …"), utilise ce nom pour choisir le candidat correspondant en priorité absolue sur toute autre règle.
+- S'il y a 3 candidats ou plus dans une scène, ne te fie PAS uniquement à l'alternance : utilise le contenu de la réplique (qui est nommé, qui répond à qui, le ton, l'âge/rôle du personnage) pour choisir parmi les candidats listés.
+- S'il ne reste que 2 candidats après restriction par scène, un échange = locuteurs qui alternent. "Oui" / "Non" / une réponse courte = l'autre personnage. Une phrase qui apostrophe un prénom ("Marie, attends") est dite par l'autre.
 - Interdit de coller toutes les répliques sur CHARACTER_01.
-- Un échange = locuteurs qui alternent. "Oui" / "Non" / une réponse courte = l'autre personnage.
-- Une phrase qui apostrophe un prénom ("Marie, attends") est dite par l'autre.
 JSON uniquement : { "assignments": [{ "id": "D001", "speakerId": "CHARACTER_01" }] }`,
       },
       {
@@ -130,7 +145,12 @@ RÉPLIQUES : ${JSON.stringify(payload)}`,
     return analysis;
   }
   const parsed = tryExtractJson(result.text);
-  const assigned = applySpeakerAssignments(lines, parseAssignments(parsed), characters);
+  const assigned = applySpeakerAssignments(
+    lines,
+    parseAssignments(parsed),
+    characters,
+    sceneCharactersByNumber,
+  );
   const dialogues = {
     ...(analysis.dialogues ?? { language: null, source: "unavailable" as const, rawTranscript: null, lines: [] }),
     lines: assigned,

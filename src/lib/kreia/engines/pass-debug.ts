@@ -21,11 +21,14 @@ export function emptyDialoguePassDebug(): DialoguePassDebug {
 
 export function formatDialoguePassDebug(debug?: DialoguePassDebug | null): string {
   if (!debug) return "";
-  const parts = [
-    `speakers attempted=${debug.speakersAttempted} ok=${debug.speakersOk} matched=${debug.speakersMatched}`,
-    debug.speakersError ? `speakersError=${debug.speakersError}` : "",
-    `relationships attempted=${debug.relationshipsAttempted} ok=${debug.relationshipsOk} filled=${debug.relationshipsFilled ?? "0/0"}`,
-    debug.relationshipsError ? `relationshipsError=${debug.relationshipsError}` : "",
-  ].filter(Boolean);
-  return parts.join(" | ");
+  return [
+    `speakersAttempted=${debug.speakersAttempted}`,
+    `speakersOk=${debug.speakersOk}`,
+    `speakersError=${debug.speakersError || "none"}`,
+    `speakersMatched=${debug.speakersMatched}`,
+    `relationshipsAttempted=${debug.relationshipsAttempted}`,
+    `relationshipsOk=${debug.relationshipsOk}`,
+    `relationshipsError=${debug.relationshipsError || "none"}`,
+    `relationshipsFilled=${debug.relationshipsFilled ?? "0/0"}`,
+  ].join(" | ");
 }

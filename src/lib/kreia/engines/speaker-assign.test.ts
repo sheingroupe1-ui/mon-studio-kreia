@@ -29,7 +29,7 @@ function character(id: string, name: string): CharacterSheet {
   };
 }
 
-function line(id: string, text: string, speakerId = "CHARACTER_01"): DialogueLine {
+function line(id: string, text: string, speakerId: string | null = "CHARACTER_01"): DialogueLine {
   return {
     id,
     sceneNumber: 1,
@@ -75,5 +75,35 @@ describe("applySpeakerAssignments", () => {
     );
     assert.equal(out[0]?.speakerId, "NARRATOR");
     assert.equal(out[0]?.sourceText, "Ils ne se parlèrent plus.");
+  });
+
+  it("rejects a speaker who is not in the scene", () => {
+    const marie = character("CHARACTER_01", "Marie");
+    const jean = character("CHARACTER_02", "Jean");
+    const lea = character("CHARACTER_03", "Léa");
+    const replica = line("D001", "Papa, arrête.", null);
+    const out = applySpeakerAssignments(
+      [replica],
+      [{ id: "D001", speakerId: "CHARACTER_03" }],
+      [marie, jean, lea],
+      new Map([[1, ["CHARACTER_01", "CHARACTER_02"]]]),
+    );
+    assert.equal(out[0]?.speakerId, null);
+    assert.equal(out[0]?.sourceText, "Papa, arrête.");
+  });
+
+  it("accepts a candidate who is present in the scene", () => {
+    const marie = character("CHARACTER_01", "Marie");
+    const jean = character("CHARACTER_02", "Jean");
+    const lea = character("CHARACTER_03", "Léa");
+    const replica = line("D001", "Léa, tais-toi.", null);
+    const out = applySpeakerAssignments(
+      [replica],
+      [{ id: "D001", speakerId: "CHARACTER_02" }],
+      [marie, jean, lea],
+      new Map([[1, ["CHARACTER_01", "CHARACTER_02", "CHARACTER_03"]]]),
+    );
+    assert.equal(out[0]?.speakerId, "CHARACTER_02");
+    assert.equal(out[0]?.speakerLabel, "Jean");
   });
 });

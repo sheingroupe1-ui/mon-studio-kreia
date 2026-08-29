@@ -13,8 +13,12 @@ describe("formatDialoguePassDebug", () => {
     debug.relationshipsError = "timeout";
     debug.relationshipsFilled = "0/2";
     const text = formatDialoguePassDebug(debug);
-    assert.match(text, /speakers attempted=true ok=true matched=4\/5/);
-    assert.match(text, /relationships attempted=true ok=false filled=0\/2/);
+    assert.match(text, /speakersAttempted=true/);
+    assert.match(text, /speakersOk=true/);
+    assert.match(text, /speakersMatched=4\/5/);
+    assert.match(text, /relationshipsAttempted=true/);
+    assert.match(text, /relationshipsOk=false/);
+    assert.match(text, /relationshipsFilled=0\/2/);
     assert.match(text, /relationshipsError=timeout/);
   });
 });
