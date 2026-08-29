@@ -165,7 +165,7 @@ export function AnalysisView({
         title={`${analysis.scenes.length} scène${analysis.scenes.length > 1 ? "s" : ""}`}
       >
         <div className="space-y-3">
-          {analysis.scenes.map((scene) => (
+          {[...analysis.scenes].sort((a, b) => a.number - b.number).map((scene) => (
             <article
               key={scene.number}
               className="rounded-[var(--radius-lg)] bg-[var(--bg)] p-4"

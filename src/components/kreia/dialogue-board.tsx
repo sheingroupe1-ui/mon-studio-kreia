@@ -135,7 +135,13 @@ export function DialogueBoard({
 }) {
   const lines = (analysis.dialogues?.lines ?? [])
     .slice()
-    .sort((a, b) => a.order - b.order);
+    .sort(
+      (a, b) =>
+        a.sceneNumber - b.sceneNumber ||
+        (a.startTime ?? 0) - (b.startTime ?? 0) ||
+        a.order - b.order ||
+        a.id.localeCompare(b.id),
+    );
   const characters = analysis.characters;
   const editable = Boolean(onChange);
 
@@ -158,6 +164,11 @@ export function DialogueBoard({
     return (
       <div className="space-y-3">
         <DialogueDebugPanel debug={debug} />
+        {analysis.dialogues.source !== "transcript" || (typeof debug === "object" && debug?.transcriptOk === false) ? (
+          <p className="rounded-[var(--radius-md)] bg-[color-mix(in_oklab,var(--speaker-amber)_18%,transparent)] px-3 py-2 text-sm text-[var(--fg)]">
+            La transcription audio n’a pas fonctionné pour cette vidéo — le dialogue ci-dessous est une estimation basée sur l’analyse d’image, à vérifier avec plus d’attention que d’habitude.
+          </p>
+        ) : null}
         <p className="text-sm text-[var(--fg-muted)]">
           Aucun dialogue identifiable. Rien n’a été inventé.
         </p>
@@ -172,9 +183,18 @@ export function DialogueBoard({
 
   const unverified = lines.filter((l) => l.attribution === "unverified" || !l.speakerId).length;
 
+  const transcriptFailed =
+    analysis.dialogues.source !== "transcript" ||
+    (typeof debug === "object" && debug?.transcriptOk === false);
+
   return (
     <div className="space-y-3">
       <DialogueDebugPanel debug={debug} />
+      {transcriptFailed ? (
+        <p className="rounded-[var(--radius-md)] bg-[color-mix(in_oklab,var(--speaker-amber)_18%,transparent)] px-3 py-2 text-sm text-[var(--fg)]">
+          La transcription audio n’a pas fonctionné pour cette vidéo — le dialogue ci-dessous est une estimation basée sur l’analyse d’image, à vérifier avec plus d’attention que d’habitude.
+        </p>
+      ) : null}
       <p className="text-xs text-[var(--fg-subtle)]">
         Référence source :{" "}
         {analysis.dialogues.source === "transcript"

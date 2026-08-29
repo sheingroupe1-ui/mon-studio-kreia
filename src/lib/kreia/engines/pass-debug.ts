@@ -1,4 +1,7 @@
 export type DialoguePassDebug = {
+  transcriptOk: boolean;
+  transcriptNote?: string;
+  transcriptError?: string;
   speakersAttempted: boolean;
   speakersOk: boolean;
   speakersError?: string;
@@ -12,6 +15,7 @@ export type DialoguePassDebug = {
 
 export function emptyDialoguePassDebug(): DialoguePassDebug {
   return {
+    transcriptOk: false,
     speakersAttempted: false,
     speakersOk: false,
     speakersMatched: "0/0",
@@ -24,6 +28,9 @@ export function emptyDialoguePassDebug(): DialoguePassDebug {
 export function formatDialoguePassDebug(debug?: DialoguePassDebug | null): string {
   if (!debug) return "";
   return [
+    `transcriptOk=${debug.transcriptOk}`,
+    `transcriptNote=${debug.transcriptNote || "none"}`,
+    debug.transcriptError ? `transcriptError=${debug.transcriptError}` : "",
     `speakersAttempted=${debug.speakersAttempted}`,
     `speakersOk=${debug.speakersOk}`,
     `speakersError=${debug.speakersError || "none"}`,
@@ -33,5 +40,7 @@ export function formatDialoguePassDebug(debug?: DialoguePassDebug | null): strin
     `relationshipsOk=${debug.relationshipsOk}`,
     `relationshipsError=${debug.relationshipsError || "none"}`,
     `relationshipsFilled=${debug.relationshipsFilled ?? "0/0"}`,
-  ].join(" | ");
+  ]
+    .filter(Boolean)
+    .join(" | ");
 }

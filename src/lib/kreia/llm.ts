@@ -187,43 +187,88 @@ function contentFromCompletion(json: unknown): string {
 
 export async function transcribeWav(
   audioWavBase64: string,
-): Promise<{ text: string | null; note: string }> {
+): Promise<{ text: string | null; note: string; ok: boolean; error?: string }> {
   const key = apiKey();
-  if (!key) return { text: null, note: "Transcription indisponible." };
+  if (!key) return { text: null, note: "Transcription indisponible.", ok: false, error: "no-api-key" };
 
   const bytes = Buffer.from(audioWavBase64, "base64");
   if (bytes.length < 2048) {
-    return { text: null, note: "Piste audio trop courte pour être transcrite." };
+    return { text: null, note: "Piste audio trop courte pour être transcrite.", ok: false, error: "audio-too-short" };
   }
 
   const form = new FormData();
-  form.append(
-    "file",
-    new Blob([new Uint8Array(bytes)], { type: "audio/wav" }),
-    "clip.wav",
-  );
   form.append("model", "grok-stt");
+  form.append("diarize", "true");
+  form.append("file", new Blob([new Uint8Array(bytes)], { type: "audio/wav" }), "clip.wav");
 
-  for (const url of ["https://api.x.ai/v1/audio/transcriptions", "https://api.x.ai/v1/stt"]) {
-    try {
-      const res = await timedFetch(
-        url,
-        { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form },
-        20_000,
-      );
-      if (!res.ok) continue;
-      const json = (await res.json()) as { text?: string; transcript?: string };
-      const text = (json.text ?? json.transcript ?? "").trim();
-      if (text) return { text, note: "Transcription obtenue." };
-    } catch {
-      continue;
+  try {
+    const res = await timedFetch(
+      "https://api.x.ai/v1/stt",
+      { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form },
+      60_000,
+    );
+    if (!res.ok) {
+      const detail = (await res.text().catch(() => "")).slice(0, 220);
+      const error = `stt ${res.status}${detail ? `: ${detail}` : ""}`;
+      console.info("[STT] failed", error);
+      return {
+        text: null,
+        note: "La piste audio n'a pas pu être transcrite. L'analyse se base sur les images.",
+        ok: false,
+        error,
+      };
+    }
+    const json = (await res.json()) as {
+      text?: string;
+      transcript?: string;
+      words?: Array<{ text?: string; start?: number; speaker?: string | number }>;
+    };
+    const fromWords = formatSttWords(json.words);
+    const text = (fromWords || json.text || json.transcript || "").trim();
+    if (text) return { text, note: "Transcription obtenue.", ok: true };
+    return {
+      text: null,
+      note: "La piste audio n'a pas pu être transcrite. L'analyse se base sur les images.",
+      ok: false,
+      error: "empty-transcript",
+    };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    console.info("[STT] error", error);
+    return {
+      text: null,
+      note: "La piste audio n'a pas pu être transcrite. L'analyse se base sur les images.",
+      ok: false,
+      error,
+    };
+  }
+}
+
+function formatSttWords(
+  words?: Array<{ text?: string; start?: number; speaker?: string | number }>,
+): string {
+  if (!Array.isArray(words) || !words.length) return "";
+  const lines: string[] = [];
+  let current: { t: number; speaker: string; texts: string[] } | null = null;
+  const flush = () => {
+    if (!current?.texts.length) return;
+    const who = current.speaker ? `${current.speaker} : ` : "";
+    lines.push(`[${current.t.toFixed(1)}s] ${who}${current.texts.join(" ")}`.trim());
+  };
+  for (const word of words) {
+    const spoken = String(word.text ?? "").trim();
+    if (!spoken) continue;
+    const speaker = word.speaker == null || word.speaker === "" ? "" : String(word.speaker);
+    const startTime: number = typeof word.start === "number" ? word.start : current ? current.t : 0;
+    if (!current || speaker !== current.speaker) {
+      flush();
+      current = { t: startTime, speaker, texts: [spoken] };
+    } else {
+      current.texts.push(spoken);
     }
   }
-
-  return {
-    text: null,
-    note: "La piste audio n'a pas pu être transcrite. L'analyse se base sur les images.",
-  };
+  flush();
+  return lines.join("\n");
 }
 
 export async function timedFetchPublic(

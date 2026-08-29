@@ -142,7 +142,7 @@ export function ProductionView({
 
       <SectionCard id="scenes" kicker="04" title="Découpage et prompts vidéo">
         <div className="space-y-4">
-          {plan.scenes.map((scene) => {
+          {[...plan.scenes].sort((a, b) => a.number - b.number).map((scene) => {
             const windows = sceneWindows(project.video.durationSeconds);
             const window = windows[scene.number - 1];
             return (

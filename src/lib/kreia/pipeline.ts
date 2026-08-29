@@ -181,34 +181,39 @@ function analysisFromCheckpoint(
 async function collectTranscript(
   data: AnalyzeInput,
   checkpoint: AnalysisCheckpoint,
-): Promise<{ text: string | null; note: string }> {
+): Promise<{ text: string | null; note: string; ok: boolean; error?: string }> {
   if (checkpoint.transcript) {
-    return { text: checkpoint.transcript, note: checkpoint.transcriptNote ?? "Transcription reprise." };
+    return { text: checkpoint.transcript, note: checkpoint.transcriptNote ?? "Transcription reprise.", ok: true };
   }
   const chunks = (data.audioChunks ?? []).filter(
     (c) => typeof c.wavBase64 === "string" && c.wavBase64.length > 2048,
   );
   if (chunks.length) {
     const parts: string[] = [];
+    let lastError: string | undefined;
     for (let i = 0; i < chunks.length; i += 2) {
       const batch = chunks.slice(i, i + 2);
       const results = await Promise.all(batch.map((chunk) => transcribeWav(chunk.wavBase64)));
       batch.forEach((chunk, idx) => {
-        const text = results[idx]?.text;
+        const result = results[idx];
+        const text = result?.text;
         if (text) parts.push(`[${chunk.t.toFixed(1)}s] ${text}`);
+        else if (result?.error) lastError = result.error;
       });
     }
-    if (parts.length) return { text: parts.join("\n"), note: "Transcription obtenue." };
+    if (parts.length) return { text: parts.join("\n"), note: "Transcription obtenue.", ok: true };
     return {
       text: null,
       note: "La piste audio n'a pas pu être transcrite. Les sous-titres et le contexte visuel restent la seule source.",
+      ok: false,
+      error: lastError,
     };
   }
   if (data.audioWavBase64 && data.audioWavBase64.length > 2048 && data.audioWavBase64.length <= 280_000) {
     const tr = await transcribeWav(data.audioWavBase64);
-    return { text: tr.text, note: tr.note };
+    return { text: tr.text, note: tr.note, ok: tr.ok, error: tr.error };
   }
-  return { text: null, note: "Aucune piste audio extraite." };
+  return { text: null, note: "Aucune piste audio extraite.", ok: false, error: "no-audio" };
 }
 
 function emptyCheckpoint(): AnalysisCheckpoint {
@@ -434,9 +439,7 @@ ${JSON.stringify(checkpoint.visualStyle ?? styleFromUserChoice(data.chosenStyleI
 
 function framesInWindow(frames: FrameCapture[], start: number, end: number, max = 3): FrameCapture[] {
   const inW = frames.filter((f) => f.t >= start - 0.05 && f.t <= end + 0.05);
-  if (inW.length) return inW.slice(0, max);
-  const mid = (start + end) / 2;
-  return [...frames].sort((a, b) => Math.abs(a.t - mid) - Math.abs(b.t - mid)).slice(0, Math.max(1, max));
+  return inW.slice(0, max);
 }
 
 async function runOneSegment(data: AnalyzeInput, frames: FrameCapture[], checkpoint: AnalysisCheckpoint) {
@@ -484,7 +487,10 @@ async function runOneSegment(data: AnalyzeInput, frames: FrameCapture[], checkpo
         {
           role: "system",
           content: `Tu analyses UNIQUEMENT ce segment (≤ 10 s). Ignore le reste de la vidéo.
-Réutilise les Character ID fournis. N'invente pas de répliques hors du transcript de CE segment.
+Réutilise les Character ID fournis.
+${transcriptSlice.trim()
+  ? "N'invente pas de répliques hors du transcript de CE segment."
+  : "Aucune parole n'a été transcrite pour ce segment. dialogues DOIT être []. N'invente aucune réplique, même si une image suggère qu'on parle."}
 JSON : { "setting":"", "action":"", "emotion":"", "camera":"", "lighting":"", "audio":"", "characters":[], "dialogues":[{ "speaker":"", "text":"", "startTime":0 }] }
 ${fruit}${angel}`,
         },
@@ -507,6 +513,10 @@ ${data.userNotes ?? ""}`,
     });
     const parsed = res.ok ? tryExtractJson(res.text) : null;
     rec = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+    if (!transcriptSlice.trim()) {
+      rec.dialogues = [];
+      rec.dialogue = "";
+    }
   } catch (err) {
     console.error("[SEGMENT] analysis failed, keeping local fallback", err);
   }
@@ -714,17 +724,28 @@ export async function runPipelineSlice(args: {
       return finish("transcript", 2);
     }
     case "transcript": {
+      const debug = checkpoint.dialogueDebug ?? emptyDialoguePassDebug();
       if (!checkpoint.transcript && !checkpoint.transcriptNote) {
         try {
           const transcribed = await collectTranscript(data, checkpoint);
           checkpoint.transcript = transcribed.text;
           checkpoint.transcriptNote = transcribed.note;
+          debug.transcriptOk = Boolean(transcribed.ok && transcribed.text);
+          debug.transcriptNote = transcribed.note;
+          debug.transcriptError = transcribed.error;
         } catch (err) {
           console.error("[PIPELINE] transcript skipped", err);
           checkpoint.transcriptNote = "Transcription indisponible — l'analyse continue.";
+          debug.transcriptOk = false;
+          debug.transcriptNote = checkpoint.transcriptNote;
+          debug.transcriptError = err instanceof Error ? err.message : String(err);
         }
+      } else {
+        debug.transcriptOk = Boolean(checkpoint.transcript);
+        debug.transcriptNote = checkpoint.transcriptNote;
       }
-      console.info("[PIPELINE] Moving to step 3");
+      checkpoint.dialogueDebug = debug;
+      console.info("[PIPELINE] transcript", debug.transcriptOk, debug.transcriptNote, debug.transcriptError);
       return finish("cast", 3);
     }
     case "cast": {

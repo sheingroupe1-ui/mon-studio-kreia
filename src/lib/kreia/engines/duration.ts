@@ -339,11 +339,7 @@ export function proposeSegments(duration: number, frameTimes: number[]): TimeSeg
   const windows = sceneWindows(duration);
   return windows.map((w, i) => {
     let owned = times.filter((t) => t >= w.start && (i === windows.length - 1 ? t <= w.end : t < w.end));
-    if (!owned.length && times.length) {
-      const mid = (w.start + w.end) / 2;
-      const nearest = times.reduce((a, b) => (Math.abs(b - mid) < Math.abs(a - mid) ? b : a));
-      owned = [nearest];
-    }
+    if (!owned.length) owned = [];
     return { index: i, start: w.start, end: w.end, frameTimes: owned };
   });
 }

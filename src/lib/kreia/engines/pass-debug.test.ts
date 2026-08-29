@@ -13,6 +13,7 @@ describe("formatDialoguePassDebug", () => {
     debug.relationshipsError = "timeout";
     debug.relationshipsFilled = "0/2";
     const text = formatDialoguePassDebug(debug);
+    assert.match(text, /transcriptOk=/);
     assert.match(text, /speakersAttempted=true/);
     assert.match(text, /speakersOk=true/);
     assert.match(text, /speakersMatched=4\/5/);
