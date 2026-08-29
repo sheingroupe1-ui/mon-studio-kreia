@@ -1,4 +1,4 @@
-import { chat } from "../llm.ts";
+import { chat, type ChatContent } from "../llm.ts";
 import { tryExtractJson } from "../parse.ts";
 import type { CharacterSheet, DialogueLine, FrameCapture, SceneAnalysis, VideoAnalysis } from "../types.ts";
 import type { DialoguePassDebug } from "./pass-debug.ts";
@@ -110,28 +110,61 @@ export function candidateIdsForScene(
   return listed.length ? listed : roster;
 }
 
-export function pickFramesForScene(
+export function pickFrameForLine(
   frames: FrameCapture[],
-  scene: SceneAnalysis | undefined,
-  lines: DialogueLine[],
-): FrameCapture[] {
+  line: DialogueLine,
+  sceneWindow: { start: number; end: number },
+): FrameCapture | undefined {
   const usable = frames.filter(
     (frame) => typeof frame.dataUrl === "string" && frame.dataUrl.startsWith("data:image/") && frame.dataUrl.length > 32,
   );
-  if (!usable.length) return [];
-  const window = parseSceneTimeWindow(scene, lines);
-  const inWindow = usable.filter((frame) => frame.t >= window.start - 0.2 && frame.t <= window.end + 0.2);
-  if (inWindow.length === 1) return inWindow;
-  if (inWindow.length >= 2) return [inWindow[0]!, inWindow[inWindow.length - 1]!];
-  const mid = (window.start + window.end) / 2;
-  return [...usable].sort((a, b) => Math.abs(a.t - mid) - Math.abs(b.t - mid)).slice(0, 1);
+  if (!usable.length) return undefined;
+  const target =
+    typeof line.startTime === "number"
+      ? line.startTime
+      : (sceneWindow.start + sceneWindow.end) / 2;
+  return [...usable].sort((a, b) => Math.abs(a.t - target) - Math.abs(b.t - target))[0];
 }
 
-function sceneImages(frames: FrameCapture[]) {
-  return frames.map((frame) => ({
-    type: "image_url" as const,
-    image_url: { url: frame.dataUrl, detail: "low" as const },
-  }));
+const MAX_SPEAKER_IMAGES = 6;
+
+function lineChunks<T>(items: T[], size = MAX_SPEAKER_IMAGES): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
+
+function speakerUserContent(
+  roster: Array<Record<string, unknown>>,
+  lines: DialogueLine[],
+  frames: FrameCapture[],
+  sceneWindow: { start: number; end: number },
+): string | ChatContent[] {
+  const parts: ChatContent[] = [
+    {
+      type: "text",
+      text: `PERSONNAGES : ${JSON.stringify(roster)}
+
+Pour chaque réplique ci-dessous, l'image qui suit immédiatement montre le moment approximatif où elle est dite. Regarde qui est visible/au premier plan/tourné vers la caméra à CE moment précis — c'est souvent le locuteur, surtout en format court où le plan change avec celui qui parle.`,
+    },
+  ];
+  let imageCount = 0;
+  for (const line of lines) {
+    parts.push({
+      type: "text",
+      text: `RÉPLIQUE ${line.id} (ordre ${line.order}) : "${line.sourceText || line.displayText}"`,
+    });
+    const frame = pickFrameForLine(frames, line, sceneWindow);
+    if (frame?.dataUrl) {
+      parts.push({ type: "image_url", image_url: { url: frame.dataUrl, detail: "low" } });
+      imageCount += 1;
+    }
+  }
+  if (!imageCount) {
+    return `PERSONNAGES : ${JSON.stringify(roster)}
+RÉPLIQUES DE CETTE SCÈNE : ${JSON.stringify(lines.map((line) => ({ id: line.id, order: line.order, text: line.sourceText || line.displayText, time: line.timeHint || line.startTime })))}`;
+  }
+  return parts;
 }
 
 function updateSpeakerDebug(analysis: VideoAnalysis, debug?: DialoguePassDebug, extra?: Partial<DialoguePassDebug>) {
@@ -160,7 +193,6 @@ export async function assignSpeakersForScene(
   const scene = analysis.scenes.find((item) => item.number === sceneNumber);
   const candidateIds = candidateIdsForScene(scene, analysis.characters ?? [], lines);
   const characters = (analysis.characters ?? []).filter((c) => candidateIds.includes(c.id));
-  const sceneFrames = pickFramesForScene(frames, scene, lines);
   updateSpeakerDebug(analysis, debug, { speakersAttempted: true });
   const roster = characters.map((c) => ({
     id: c.id,
@@ -170,74 +202,60 @@ export async function assignSpeakersForScene(
     sex: c.sex,
     role: c.role,
   }));
-  const payload = lines.map((line) => ({
-    id: line.id,
-    order: line.order,
-    text: line.sourceText || line.displayText,
-    time: line.timeHint || line.startTime,
-  }));
-  const userContent = sceneFrames.length
-    ? [
+  const window = parseSceneTimeWindow(scene, lines);
+  const sceneCharsMap = new Map([[sceneNumber, candidateIds]]);
+  let current = analysis;
+  for (const chunk of lineChunks(lines)) {
+    const result = await chat({
+      messages: [
         {
-          type: "text" as const,
-          text: `PERSONNAGES : ${JSON.stringify(roster)}
-RÉPLIQUES DE CETTE SCÈNE : ${JSON.stringify(payload)}`,
-        },
-        ...sceneImages(sceneFrames),
-      ]
-    : `PERSONNAGES : ${JSON.stringify(roster)}
-RÉPLIQUES DE CETTE SCÈNE : ${JSON.stringify(payload)}`;
-  const result = await chat({
-    messages: [
-      {
-        role: "system",
-        content: `Tu attribues chaque réplique de CETTE SCÈNE au bon locuteur, en t'aidant
-des images fournies pour voir qui parle réellement (mouvement des lèvres, qui est tourné vers la caméra,
-attitude). Règles :
+          role: "system",
+          content: `Tu attribues chaque réplique de CETTE SCÈNE au bon locuteur.
+Règles :
+- Pour chaque réplique, une image montre le moment approximatif où elle est dite. Le personnage le plus visible, au premier plan, ou tourné vers la caméra à ce moment est généralement le locuteur — surtout pour ce type de contenu où le plan cadre souvent celui qui parle.
+- Si l'image ne permet pas de trancher clairement, utilise les règles de texte (nom tagué dans le transcript, alternance si 2 candidats seulement) en repli.
 - speakerId DOIT être l'un des personnages listés dans PERSONNAGES (ou "NARRATOR").
-- Utilise l'image en priorité pour trancher les cas ambigus, avant les règles de texte.
-- Si le transcript tague un nom, priorité à ce nom.
-- S'il ne reste que 2 personnages, une réponse courte ("Oui"/"Non") vient généralement de l'autre locuteur.
 - N'assigne JAMAIS un personnage absent de PERSONNAGES.
 JSON uniquement : { "assignments": [{ "id": "D001", "speakerId": "CHARACTER_01" }] }`,
+        },
+        {
+          role: "user",
+          content: speakerUserContent(roster, chunk, frames, window),
+        },
+      ],
+      maxTokens: 800,
+    });
+    if (!result.ok) {
+      console.info("[SPEAKERS] scene skip", sceneNumber, result.error);
+      updateSpeakerDebug(current, debug, { speakersOk: false, speakersError: result.error });
+      continue;
+    }
+    const parsed = tryExtractJson(result.text);
+    const allLinesNow = current.dialogues?.lines ?? [];
+    const sceneAssigned = applySpeakerAssignments(
+      chunk,
+      parseAssignments(parsed),
+      current.characters ?? [],
+      sceneCharsMap,
+    );
+    const byId = new Map(sceneAssigned.map((item) => [item.id, item]));
+    const merged = allLinesNow.map((item) => byId.get(item.id) ?? item);
+    current = {
+      ...current,
+      dialogues: {
+        ...(current.dialogues ?? { language: null, source: "unavailable" as const, rawTranscript: null, lines: [] }),
+        lines: merged,
       },
-      {
-        role: "user",
-        content: userContent,
-      },
-    ],
-    maxTokens: 800,
-  });
-  if (!result.ok) {
-    console.info("[SPEAKERS] scene skip", sceneNumber, result.error);
-    updateSpeakerDebug(analysis, debug, { speakersOk: false, speakersError: result.error });
-    return analysis;
+      scenes: applyLinesToScenes(current.scenes, merged),
+    };
+    updateSpeakerDebug(current, debug, { speakersOk: true, speakersError: undefined });
+    console.info(
+      "[SPEAKERS] scene",
+      sceneNumber,
+      sceneAssigned.map((item) => `${item.id}:${item.speakerLabel}`).join(", "),
+    );
   }
-  const parsed = tryExtractJson(result.text);
-  const sceneCharsMap = new Map([[sceneNumber, candidateIds]]);
-  const sceneAssigned = applySpeakerAssignments(
-    lines,
-    parseAssignments(parsed),
-    analysis.characters ?? [],
-    sceneCharsMap,
-  );
-  const byId = new Map(sceneAssigned.map((line) => [line.id, line]));
-  const merged = allLines.map((line) => byId.get(line.id) ?? line);
-  const next: VideoAnalysis = {
-    ...analysis,
-    dialogues: {
-      ...(analysis.dialogues ?? { language: null, source: "unavailable" as const, rawTranscript: null, lines: [] }),
-      lines: merged,
-    },
-    scenes: applyLinesToScenes(analysis.scenes, merged),
-  };
-  updateSpeakerDebug(next, debug, { speakersOk: true, speakersError: undefined });
-  console.info(
-    "[SPEAKERS] scene",
-    sceneNumber,
-    sceneAssigned.map((line) => `${line.id}:${line.speakerLabel}`).join(", "),
-  );
-  return next;
+  return current;
 }
 
 export async function assignSpeakersWithLlm(

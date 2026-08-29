@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { applySpeakerAssignments, candidateIdsForScene, parseSceneTimeWindow, pickFramesForScene } from "./speaker-assign.ts";
+import { applySpeakerAssignments, candidateIdsForScene, parseSceneTimeWindow, pickFrameForLine } from "./speaker-assign.ts";
 import { emptyPerformance } from "./dialogues.ts";
 import type { CharacterSheet, DialogueLine, FrameCapture } from "../types.ts";
 
@@ -108,38 +108,23 @@ describe("applySpeakerAssignments", () => {
   });
 });
 
-describe("pickFramesForScene", () => {
-  it("picks frames inside the scene window", () => {
+describe("pickFrameForLine", () => {
+  it("gives each replica the nearest frame to its own timestamp", () => {
     const jpeg = "data:image/jpeg;base64," + "A".repeat(40);
     const frames: FrameCapture[] = [
-      { t: 1, dataUrl: jpeg },
-      { t: 5, dataUrl: jpeg },
-      { t: 12, dataUrl: jpeg },
+      { t: 1, dataUrl: jpeg + "1" },
+      { t: 5, dataUrl: jpeg + "2" },
+      { t: 9, dataUrl: jpeg + "3" },
     ];
-    const picked = pickFramesForScene(
-      frames,
-      {
-        number: 1,
-        estimatedDuration: 10,
-        startHint: "0 → 10",
-        characters: ["CHARACTER_01"],
-        setting: "",
-        action: "",
-        emotion: "",
-        camera: "",
-        lighting: "",
-        audio: "",
-        dialogue: null,
-        dialogueSpeaker: null,
-        styleNotes: "",
-        confidence: "observed",
-        silentReactions: [],
-      },
-      [],
-    );
-    assert.equal(picked.length, 2);
-    assert.equal(picked[0]?.t, 1);
-    assert.equal(picked[1]?.t, 5);
+    const window = { start: 0, end: 10 };
+    const a = pickFrameForLine(frames, { ...line("D001", "Un.", null), startTime: 1 }, window);
+    const b = pickFrameForLine(frames, { ...line("D002", "Deux.", null), startTime: 5 }, window);
+    const c = pickFrameForLine(frames, { ...line("D003", "Trois.", null), startTime: 9 }, window);
+    assert.equal(a?.t, 1);
+    assert.equal(b?.t, 5);
+    assert.equal(c?.t, 9);
+    assert.notEqual(a?.t, b?.t);
+    assert.notEqual(b?.t, c?.t);
   });
 
   it("parses MM:SS clocks used by the pipeline startHint", () => {
