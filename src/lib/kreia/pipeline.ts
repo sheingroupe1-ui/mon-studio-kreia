@@ -21,6 +21,7 @@ import { duplicateWarnings } from "./engines/cast-edit";
 import { briefCountWarning, formatUserBrief } from "./user-brief";
 import { styleFromUserChoice } from "./visual-styles";
 import { assignSpeakersWithLlm } from "./engines/speaker-assign";
+import { inferCharacterRelationships } from "./engines/relationships";
 import { linesFromSegmentPayload, sliceTranscriptForWindow } from "./engines/transcript-slice";
 import { fruitHumanoidPromptBlock } from "./engines/fruit-humanoid";
 import { angelPromptBlock } from "./engines/angel";
@@ -132,14 +133,21 @@ async function finalizeAnalysisDialogues(
   analysis: VideoAnalysis,
   durationSeconds: number,
   transcript: string | null,
+  opts?: { refit?: boolean },
 ): Promise<VideoAnalysis> {
-  const fitted = applyDurationFit(analysis, durationSeconds, transcript);
+  let next =
+    opts?.refit === false ? analysis : applyDurationFit(analysis, durationSeconds, transcript);
   try {
-    return await assignSpeakersWithLlm(fitted);
+    next = await assignSpeakersWithLlm(next);
   } catch (err) {
     console.error("[SPEAKERS] fallback heuristics", err);
-    return fitted;
   }
+  try {
+    next = await inferCharacterRelationships(next);
+  } catch (err) {
+    console.error("[RELATIONSHIPS] skip", err);
+  }
+  return next;
 }
 
 function analysisFromCheckpoint(
@@ -613,6 +621,9 @@ async function runNarrativeStep(
   if (checkpoint.visualStyle) analysis.visualStyle = checkpoint.visualStyle;
   analysis.sceneCountEstimate = scenes.length;
   analysis = fitDialoguesToScenes(analysis, scenes.length, duration || data.durationSeconds);
+  analysis = await finalizeAnalysisDialogues(analysis, duration || data.durationSeconds, transcript, {
+    refit: false,
+  });
   markCompleted(checkpoint, "narrative");
   checkpoint.incomplete = false;
   return analysis;
@@ -761,7 +772,14 @@ export async function runPipelineSlice(args: {
         checkpoint.analysis = await runCompactStep(data, frames, checkpoint);
       }
       console.info("[PIPELINE] compact COMPLETE");
-      checkpoint.dialoguesValidated = true;
+      if (!checkpoint.dialoguesValidated) {
+        return finish("produce", 6, {
+          compact: true,
+          analysis: checkpoint.analysis,
+          awaitingDialogueReview: true,
+          done: true,
+        });
+      }
       return finish("produce", 7, { compact: true, analysis: checkpoint.analysis });
     }
     case "segment": {
@@ -777,7 +795,13 @@ export async function runPipelineSlice(args: {
       if (!checkpoint.analysis) {
         checkpoint.analysis = await runNarrativeStep(data, frames, checkpoint);
       }
-      checkpoint.dialoguesValidated = true;
+      if (!checkpoint.dialoguesValidated) {
+        return finish("produce", 6, {
+          analysis: checkpoint.analysis,
+          awaitingDialogueReview: true,
+          done: true,
+        });
+      }
       return finish("produce", 7, { analysis: checkpoint.analysis });
     }
     case "produce": {

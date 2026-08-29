@@ -1,6 +1,7 @@
 import { collapseAnalysisScenes, expectedSceneCount, inferSourceDuration, packDurations } from "./duration";
 import { enforceProductionDialogues, fitDialoguesToScenes, formatLockedDialogue, linesForScene } from "./dialogues";
 import { validateIsolatedProduction } from "./guards";
+import { sceneRelationshipNotes } from "./relationships";
 import { composeCharacterImagePrompt, enforceProductionIdentity, identityParagraph } from "./identity";
 import { expandCharacterIds } from "./continuity";
 import { chat, fail, NETWORK_MESSAGE, type OkErr } from "../llm";
@@ -99,6 +100,7 @@ function sceneUserPrompt(input: GenerateInput, index: number, first: boolean): s
     .filter((c) => !presentIds.length || presentIds.includes(c.id))
     .map((c) => identityParagraph(c))
     .join("\n");
+  const relations = sceneRelationshipNotes(analysis.characters, presentIds);
   const scenePayload = scene
     ? {
         number: scene.number,
@@ -121,6 +123,7 @@ ${first ? "Inclus aussi hook, scenario, characters (fiches), visualStyle." : "Ne
 
 PERSONNAGES PRÉSENTS DANS CETTE SCÈNE
 ${chars || "(aucun)"}
+${relations ? `\nRELATIONS DANS CETTE SCÈNE\n${relations}` : ""}
 
 SCÈNE ANALYSÉE (fenêtre locale uniquement)
 ${JSON.stringify(scenePayload, null, 2)}

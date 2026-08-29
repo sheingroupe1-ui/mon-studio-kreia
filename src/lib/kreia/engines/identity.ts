@@ -102,6 +102,7 @@ export function identityParagraph(c: CharacterSheet): string {
     c.wings && `ailes (observées) : ${c.wings}`,
     c.halo && `halo (observé) : ${c.halo}`,
     c.distinctiveFeatures && `traits distinctifs : ${c.distinctiveFeatures}`,
+    c.relationships && `relations : ${c.relationships}`,
     c.lockedTraits.length ? `verrouillé : ${c.lockedTraits.join(", ")}` : "",
   ].filter(Boolean);
   return bits.join(". ");

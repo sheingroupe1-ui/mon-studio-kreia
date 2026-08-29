@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { composeCharacterImagePrompt, weaveStyleIntoPrompt } from "./identity.ts";
+import { composeCharacterImagePrompt, identityParagraph, weaveStyleIntoPrompt } from "./identity.ts";
 import type { CharacterSheet, VideoAnalysis, VisualStyleAnalysis } from "../types.ts";
 
 function style(partial: Partial<VisualStyleAnalysis> = {}): VisualStyleAnalysis {
@@ -96,6 +96,32 @@ describe("composeCharacterImagePrompt", () => {
     const prompt = composeCharacterImagePrompt(character, analysis);
     assert.match(prompt, /Do not invent wings/);
     assert.match(prompt, /photoreal cinematic/);
+  });
+
+  it("includes observed relationships in the identity paragraph", () => {
+    const paragraph = identityParagraph({
+      id: "CHARACTER_01",
+      designation: "Marie",
+      name: "Marie",
+      sourceName: "Marie",
+      nameConfidence: "observed",
+      ageApparent: "",
+      sex: "female",
+      appearance: "",
+      complexion: "",
+      morphology: "",
+      hair: "",
+      eyes: "",
+      clothing: "",
+      accessories: "",
+      role: "",
+      personality: "",
+      relationships: "Épouse de CHARACTER_02.",
+      prominence: "principal",
+      lockedTraits: [],
+      notes: "",
+    });
+    assert.match(paragraph, /Épouse de CHARACTER_02/);
   });
 });
 
