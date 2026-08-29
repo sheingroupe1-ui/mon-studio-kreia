@@ -1,6 +1,7 @@
 import { chat } from "../llm.ts";
 import { tryExtractJson } from "../parse.ts";
 import type { CharacterSheet, VideoAnalysis } from "../types.ts";
+import type { DialoguePassDebug } from "./pass-debug.ts";
 
 export function applyRelationshipUpdates(
   characters: CharacterSheet[],
@@ -49,9 +50,23 @@ function parseRelationshipPayload(raw: unknown): Array<{ id?: string; relationsh
     }));
 }
 
-export async function inferCharacterRelationships(analysis: VideoAnalysis): Promise<VideoAnalysis> {
+export async function inferCharacterRelationships(
+  analysis: VideoAnalysis,
+  debug?: DialoguePassDebug,
+): Promise<VideoAnalysis> {
   const characters = analysis.characters ?? [];
-  if (characters.length < 2) return analysis;
+  const filled = characters.filter((c) => Boolean(c.relationships?.trim())).length;
+  if (debug) {
+    debug.relationshipsAttempted = false;
+    debug.relationshipsOk = false;
+    debug.relationshipsFilled = `${filled}/${characters.length}`;
+    debug.relationshipsError = undefined;
+  }
+  if (characters.length < 2) {
+    if (debug) debug.relationshipsError = "lt-2-characters";
+    return analysis;
+  }
+  if (debug) debug.relationshipsAttempted = true;
   const roster = characters.map((c) => ({
     id: c.id,
     name: c.name,
@@ -88,9 +103,18 @@ SCÈNES (action + dialogue) : ${JSON.stringify(sceneSummaries)}`,
   });
   if (!result.ok) {
     console.info("[RELATIONSHIPS] skip", result.error);
+    if (debug) {
+      debug.relationshipsOk = false;
+      debug.relationshipsError = result.error;
+    }
     return analysis;
   }
   const parsed = tryExtractJson(result.text);
   const next = applyRelationshipUpdates(characters, parseRelationshipPayload(parsed));
+  const after = next.filter((c) => Boolean(c.relationships?.trim())).length;
+  if (debug) {
+    debug.relationshipsOk = true;
+    debug.relationshipsFilled = `${after}/${next.length}`;
+  }
   return { ...analysis, characters: next };
 }

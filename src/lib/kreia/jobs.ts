@@ -255,7 +255,12 @@ async function runAnalyzeSlice(job: JobRecord): Promise<void> {
   job.checkpoint = slice.checkpoint;
   job.progress = {
     ...slice.progress,
-    debug: `phase=${slice.nextPhase} done=${slice.done} chars=${slice.checkpoint.characters?.length ?? 0}`,
+    debug: [
+      `phase=${slice.nextPhase} done=${slice.done} chars=${slice.checkpoint.characters?.length ?? 0}`,
+      slice.progress.debug,
+    ]
+      .filter(Boolean)
+      .join(" | "),
   };
   job.phase = slice.nextPhase;
   job.debug = job.progress.debug;

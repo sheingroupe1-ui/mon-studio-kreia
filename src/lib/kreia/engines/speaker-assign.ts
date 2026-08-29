@@ -1,6 +1,7 @@
 import { chat } from "../llm.ts";
 import { tryExtractJson } from "../parse.ts";
 import type { CharacterSheet, DialogueLine, VideoAnalysis } from "../types.ts";
+import type { DialoguePassDebug } from "./pass-debug.ts";
 import {
   applyLinesToScenes,
   displayCharacterName,
@@ -63,10 +64,24 @@ function parseAssignments(raw: unknown): Array<{ id?: string; order?: number; sp
     }));
 }
 
-export async function assignSpeakersWithLlm(analysis: VideoAnalysis): Promise<VideoAnalysis> {
+export async function assignSpeakersWithLlm(
+  analysis: VideoAnalysis,
+  debug?: DialoguePassDebug,
+): Promise<VideoAnalysis> {
   const lines = analysis.dialogues?.lines ?? [];
   const characters = analysis.characters ?? [];
-  if (!lines.length || !characters.length) return analysis;
+  const already = lines.filter((line) => Boolean(line.speakerId)).length;
+  if (debug) {
+    debug.speakersAttempted = false;
+    debug.speakersOk = false;
+    debug.speakersMatched = `${already}/${lines.length}`;
+    debug.speakersError = undefined;
+  }
+  if (!lines.length || !characters.length) {
+    if (debug) debug.speakersError = !lines.length ? "no-lines" : "no-characters";
+    return analysis;
+  }
+  if (debug) debug.speakersAttempted = true;
   const roster = characters.map((c) => ({
     id: c.id,
     name: c.name,
@@ -107,6 +122,11 @@ RÉPLIQUES : ${JSON.stringify(payload)}`,
   });
   if (!result.ok) {
     console.info("[SPEAKERS] LLM skip", result.error);
+    if (debug) {
+      debug.speakersOk = false;
+      debug.speakersError = result.error;
+      debug.speakersMatched = `${already}/${lines.length}`;
+    }
     return analysis;
   }
   const parsed = tryExtractJson(result.text);
@@ -115,6 +135,11 @@ RÉPLIQUES : ${JSON.stringify(payload)}`,
     ...(analysis.dialogues ?? { language: null, source: "unavailable" as const, rawTranscript: null, lines: [] }),
     lines: assigned,
   };
+  const matched = assigned.filter((line) => Boolean(line.speakerId)).length;
+  if (debug) {
+    debug.speakersOk = true;
+    debug.speakersMatched = `${matched}/${assigned.length}`;
+  }
   console.info(
     "[SPEAKERS] assigned",
     assigned.map((line) => `${line.id}:${line.speakerLabel}`).join(", "),

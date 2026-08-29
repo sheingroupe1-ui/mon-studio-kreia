@@ -22,6 +22,7 @@ import { briefCountWarning, formatUserBrief } from "./user-brief";
 import { styleFromUserChoice } from "./visual-styles";
 import { assignSpeakersWithLlm } from "./engines/speaker-assign";
 import { inferCharacterRelationships } from "./engines/relationships";
+import { emptyDialoguePassDebug, formatDialoguePassDebug } from "./engines/pass-debug";
 import { linesFromSegmentPayload, sliceTranscriptForWindow } from "./engines/transcript-slice";
 import { fruitHumanoidPromptBlock } from "./engines/fruit-humanoid";
 import { angelPromptBlock } from "./engines/angel";
@@ -133,20 +134,28 @@ async function finalizeAnalysisDialogues(
   analysis: VideoAnalysis,
   durationSeconds: number,
   transcript: string | null,
-  opts?: { refit?: boolean },
+  opts?: { refit?: boolean; checkpoint?: AnalysisCheckpoint },
 ): Promise<VideoAnalysis> {
+  const debug = emptyDialoguePassDebug();
   let next =
     opts?.refit === false ? analysis : applyDurationFit(analysis, durationSeconds, transcript);
   try {
-    next = await assignSpeakersWithLlm(next);
+    next = await assignSpeakersWithLlm(next, debug);
   } catch (err) {
     console.error("[SPEAKERS] fallback heuristics", err);
+    debug.speakersAttempted = true;
+    debug.speakersOk = false;
+    debug.speakersError = err instanceof Error ? err.message : String(err);
   }
   try {
-    next = await inferCharacterRelationships(next);
+    next = await inferCharacterRelationships(next, debug);
   } catch (err) {
     console.error("[RELATIONSHIPS] skip", err);
+    debug.relationshipsAttempted = true;
+    debug.relationshipsOk = false;
+    debug.relationshipsError = err instanceof Error ? err.message : String(err);
   }
+  if (opts?.checkpoint) opts.checkpoint.dialogueDebug = debug;
   return next;
 }
 
@@ -396,8 +405,11 @@ ${JSON.stringify(checkpoint.visualStyle ?? styleFromUserChoice(data.chosenStyleI
     };
   }
   if (!result || !result.ok) {
-    const analysis = await assignSpeakersWithLlm(
+    const analysis = await finalizeAnalysisDialogues(
       analysisFromCheckpoint(checkpoint, data, transcript, transcriptNote),
+      data.durationSeconds,
+      transcript,
+      { refit: false, checkpoint },
     );
     markCompleted(checkpoint, "segments");
     markCompleted(checkpoint, "narrative");
@@ -419,7 +431,7 @@ ${JSON.stringify(checkpoint.visualStyle ?? styleFromUserChoice(data.chosenStyleI
     if (!analysis.observedSummary) {
       analysis.observedSummary = checkpoint.observedSummary || "Contenu observé à partir des photogrammes.";
     }
-    analysis = await finalizeAnalysisDialogues(analysis, data.durationSeconds, transcript);
+    analysis = await finalizeAnalysisDialogues(analysis, data.durationSeconds, transcript, { checkpoint });
     markCompleted(checkpoint, "segments");
     markCompleted(checkpoint, "narrative");
     checkpoint.incomplete = false;
@@ -429,13 +441,16 @@ ${JSON.stringify(checkpoint.visualStyle ?? styleFromUserChoice(data.chosenStyleI
       let analysis = await parseOrRepair(result.text);
       if (known.length) analysis.characters = known;
       if (!analysis.audio.notes) analysis.audio.notes = transcriptNote;
-      analysis = await finalizeAnalysisDialogues(analysis, data.durationSeconds, transcript);
+      analysis = await finalizeAnalysisDialogues(analysis, data.durationSeconds, transcript, { checkpoint });
       markCompleted(checkpoint, "segments");
       markCompleted(checkpoint, "narrative");
       return analysis;
     } catch {
-      const analysis = await assignSpeakersWithLlm(
+      const analysis = await finalizeAnalysisDialogues(
         analysisFromCheckpoint(checkpoint, data, transcript, transcriptNote),
+        data.durationSeconds,
+        transcript,
+        { refit: false, checkpoint },
       );
       markCompleted(checkpoint, "segments");
       markCompleted(checkpoint, "narrative");
@@ -623,6 +638,7 @@ async function runNarrativeStep(
   analysis = fitDialoguesToScenes(analysis, scenes.length, duration || data.durationSeconds);
   analysis = await finalizeAnalysisDialogues(analysis, duration || data.durationSeconds, transcript, {
     refit: false,
+    checkpoint,
   });
   markCompleted(checkpoint, "narrative");
   checkpoint.incomplete = false;
@@ -666,6 +682,7 @@ export async function runPipelineSlice(args: {
       castBatchesTotal: extra?.castBatchesTotal,
       productionScenesDone: extra?.productionScenesDone,
       productionScenesTotal: extra?.productionScenesTotal,
+      debug: formatDialoguePassDebug(checkpoint.dialogueDebug) || extra?.debug,
     }),
     analysis: extra?.analysis,
     production: extra?.production,

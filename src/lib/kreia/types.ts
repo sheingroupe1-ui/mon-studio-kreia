@@ -338,6 +338,7 @@ export type AnalysisCheckpoint = {
   transcriptNote?: string;
   castValidated?: boolean;
   dialoguesValidated?: boolean;
+  dialogueDebug?: import("./engines/pass-debug").DialoguePassDebug;
   analysis?: VideoAnalysis;
   production?: ProductionPlan;
   userBrief?: UserBrief;
