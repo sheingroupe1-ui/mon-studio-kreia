@@ -1269,6 +1269,7 @@ export function enforceProductionDialogues(
         analysis: locked,
         lines: owned,
       }),
+      formattedPrompt: scene.formattedPrompt || "",
     };
   });
 

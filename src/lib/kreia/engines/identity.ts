@@ -258,7 +258,12 @@ export function enforceProductionIdentity(
       return { ...entry, imagePrompt: weaveStyleIntoPrompt(entry.imagePrompt, analysis) };
     }
     const dossier = composeCharacterDossier(sheet, analysis);
-    return { ...entry, bible: identityParagraph(sheet), imagePrompt: dossier, formattedSheet: dossier };
+    return {
+      ...entry,
+      bible: entry.bible || identityParagraph(sheet),
+      imagePrompt: entry.imagePrompt || dossier,
+      formattedSheet: entry.formattedSheet?.trim() || dossier,
+    };
   });
   const scenes = production.scenes.map((scene) => ({
     ...scene,

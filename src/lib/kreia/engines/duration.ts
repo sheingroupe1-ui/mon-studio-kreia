@@ -319,6 +319,7 @@ export function collapseProductionScenes(
       audio: mergeText(chunk.map((s) => s.audio), " ; ") || first.audio,
       dialogue: expanding ? null : joinDialogues(chunk.map((s) => s.dialogue)),
       videoPrompt: expanding ? "" : chunk.length === 1 ? first.videoPrompt : first.videoPrompt,
+      formattedPrompt: expanding ? "" : first.formattedPrompt || "",
       continuityNotes:
         i === 0
           ? first.continuityNotes
