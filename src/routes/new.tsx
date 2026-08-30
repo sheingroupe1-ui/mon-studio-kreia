@@ -271,6 +271,9 @@ function NewProject() {
       await setAnalysis(result.analysis);
       const production = "production" in result ? result.production : undefined;
       if (production) await setProduction(production);
+      if ("checkpoint" in result && result.checkpoint) {
+        await patchCurrent({ analysisCheckpoint: result.checkpoint });
+      }
       toast.success(production ? "Prompts prêts à copier." : "Analyse prête à vérifier.");
       await navigate({ to: "/projects/$id", params: { id: result.projectId } });
     } catch (err) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { formatDialoguePassDebug, emptyDialoguePassDebug } from "./pass-debug.ts";
+import { formatDialoguePassDebug, emptyDialoguePassDebug, formatProductionPromptDebug } from "./pass-debug.ts";
 
 describe("formatDialoguePassDebug", () => {
   it("renders speaker and relationship flags", () => {
@@ -23,5 +23,16 @@ describe("formatDialoguePassDebug", () => {
     assert.match(text, /relationshipsOk=false/);
     assert.match(text, /relationshipsFilled=0\/2/);
     assert.match(text, /relationshipsError=timeout/);
+  });
+});
+
+describe("formatProductionPromptDebug", () => {
+  it("renders formattedPrompt flags from the checkpoint", () => {
+    const text = formatProductionPromptDebug({
+      productionFormattedPromptOk: true,
+      productionFormattedPromptSample: 's1 fmtOk=true fmt="🎬 SCÈNE 1"',
+    });
+    assert.match(text, /productionFormattedPromptOk=true/);
+    assert.match(text, /🎬 SCÈNE 1/);
   });
 });

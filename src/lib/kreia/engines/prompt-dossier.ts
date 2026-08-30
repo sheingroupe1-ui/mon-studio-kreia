@@ -231,3 +231,18 @@ export function composeSceneDossier(
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
+
+export function looksLikeSceneDossier(text: string | undefined | null): boolean {
+  const value = (text ?? "").trim();
+  if (value.length < 40) return false;
+  return /SCÈNE/.test(value) && /DURÉE/.test(value);
+}
+
+export function fillSceneFormattedPrompt(
+  analysis: VideoAnalysis,
+  index: number,
+  scene: SceneProduction,
+): string {
+  if (looksLikeSceneDossier(scene.formattedPrompt)) return scene.formattedPrompt!.trim();
+  return composeSceneDossier(analysis, index, scene);
+}

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { composeSceneDossier } from "./prompt-dossier.ts";
-import type { CharacterSheet, SceneAnalysis, VideoAnalysis, VisualStyleAnalysis } from "../types.ts";
+import { composeSceneDossier, fillSceneFormattedPrompt, looksLikeSceneDossier } from "./prompt-dossier.ts";
+import type { CharacterSheet, SceneAnalysis, SceneProduction, VideoAnalysis, VisualStyleAnalysis } from "../types.ts";
 
 function sheet(partial: Partial<CharacterSheet> & Pick<CharacterSheet, "id" | "designation">): CharacterSheet {
   return {
@@ -157,5 +157,82 @@ describe("composeSceneDossier", () => {
     assert.match(prompt, /🎙️ RÉPLIQUES/);
     assert.match(prompt, /Aucun dialogue/);
     assert.match(prompt, /📊 TOTAL DIALOGUES : 0 CARACTÈRES/);
+  });
+});
+
+describe("fillSceneFormattedPrompt", () => {
+  it("composes the dossier when formattedPrompt is empty", () => {
+    const analysis = {
+      characters: [sheet({ id: "CHARACTER_01", designation: "Marie" })],
+      visualStyle: { lockedStylePhrase: "animation 3D cinématographique" } as VisualStyleAnalysis,
+      scenes: [
+        {
+          number: 1,
+          estimatedDuration: 10,
+          startHint: "00:00",
+          characters: ["CHARACTER_01"],
+          setting: "Cuisine",
+          action: "Marie ouvre la porte",
+          emotion: "tension",
+          camera: "plan large",
+          lighting: "",
+          audio: "",
+          dialogue: null,
+          dialogueSpeaker: null,
+          styleNotes: "",
+          confidence: "observed",
+          silentReactions: [],
+        } satisfies SceneAnalysis,
+      ],
+      dialogues: { language: "fr", source: "unavailable", rawTranscript: null, lines: [] },
+    } as unknown as VideoAnalysis;
+    const scene: SceneProduction = {
+      number: 1,
+      duration: 10,
+      characters: ["CHARACTER_01"],
+      location: "Cuisine",
+      action: "Marie ouvre la porte",
+      emotion: "tension",
+      camera: "plan large",
+      lighting: "",
+      visualStyle: "",
+      audio: "",
+      dialogue: null,
+      videoPrompt: "Scène en 3D cinématographique, éclairage studio, textures détaillées, caméra de ",
+      continuityNotes: "",
+      formattedPrompt: "",
+    };
+    assert.equal(looksLikeSceneDossier(scene.formattedPrompt), false);
+    const filled = fillSceneFormattedPrompt(analysis, 0, scene);
+    assert.match(filled, /🎬 SCÈNE 1/);
+    assert.match(filled, /⏱️ DURÉE : 10 SECONDES/);
+    assert.match(filled, /Marie/);
+  });
+
+  it("keeps a valid IA dossier", () => {
+    const analysis = {
+      characters: [],
+      visualStyle: { lockedStylePhrase: "pixar" } as VisualStyleAnalysis,
+      scenes: [],
+      dialogues: { language: "fr", source: "unavailable", rawTranscript: null, lines: [] },
+    } as unknown as VideoAnalysis;
+    const kept = `🎬 SCÈNE 2 — Le regard\n\n⏱️ DURÉE : 8 SECONDES\n\n🎨 STYLE D'ANIMATION\n\npixar`;
+    const scene: SceneProduction = {
+      number: 2,
+      duration: 8,
+      characters: [],
+      location: "",
+      action: "",
+      emotion: "",
+      camera: "",
+      lighting: "",
+      visualStyle: "",
+      audio: "",
+      dialogue: null,
+      videoPrompt: "short",
+      continuityNotes: "",
+      formattedPrompt: kept,
+    };
+    assert.equal(fillSceneFormattedPrompt(analysis, 1, scene), kept);
   });
 });

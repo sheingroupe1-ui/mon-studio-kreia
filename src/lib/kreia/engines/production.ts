@@ -3,6 +3,7 @@ import { enforceProductionDialogues, fitDialoguesToScenes, formatLockedDialogue,
 import { validateIsolatedProduction } from "./guards";
 import { sceneRelationshipNotes } from "./relationships";
 import { composeCharacterDossier, composeCharacterImagePrompt, enforceProductionIdentity, identityParagraph } from "./identity";
+import { fillSceneFormattedPrompt } from "./prompt-dossier";
 import { expandCharacterIds } from "./continuity";
 import { chat, fail, NETWORK_MESSAGE, type OkErr } from "../llm";
 import { extractJson, parseProduction } from "../parse";
@@ -154,11 +155,11 @@ JSON :
 ${first ? `{
   "hook": { "reconstructed":"", "visualPrompt":"", "duration": 8, "mechanism":"" },
   "scenario": { "logline":"", "synopsis":"", "structure":"", "dialoguesNote":"" },
-  "characters": [{ "id":"", "bible":"", "imagePrompt":"", "formattedSheet":"" }],
+  "characters": [{ "id":"", "bible":"", "imagePrompt":"" }],
   "visualStyle": { "lockedPhrase":"", "productionNotes":"", "doNot":[] },
-  "scene": { "number": ${index + 1}, "duration": 8, "characters":[], "location":"", "action":"", "emotion":"", "camera":"", "lighting":"", "visualStyle":"", "audio":"", "dialogue": null, "videoPrompt":"", "continuityNotes":"", "formattedPrompt":"" }
+  "scene": { "formattedPrompt":"", "number": ${index + 1}, "duration": 8, "characters":[], "location":"", "action":"", "emotion":"", "camera":"", "lighting":"", "visualStyle":"", "audio":"", "dialogue": null, "videoPrompt":"", "continuityNotes":"" }
 }` : `{
-  "scene": { "number": ${index + 1}, "duration": 8, "characters":[], "location":"", "action":"", "emotion":"", "camera":"", "lighting":"", "visualStyle":"", "audio":"", "dialogue": null, "videoPrompt":"", "continuityNotes":"", "formattedPrompt":"" }
+  "scene": { "formattedPrompt":"", "number": ${index + 1}, "duration": 8, "characters":[], "location":"", "action":"", "emotion":"", "camera":"", "lighting":"", "visualStyle":"", "audio":"", "dialogue": null, "videoPrompt":"", "continuityNotes":"" }
 }`}
 duration ∈ {6, 8, 10}.
 videoPrompt = paragraphe interne court.
@@ -222,6 +223,26 @@ export async function runOneProductionScene(
           ? json
           : { scenes: [json] };
       const parsed = parseProduction(wrapped);
+      const iaScene = parsed.scenes[0];
+      console.info("[PRODUCE DEBUG]", {
+        sceneIndex: index,
+        hasFormattedPrompt: Boolean(iaScene?.formattedPrompt),
+        formattedPromptLength: iaScene?.formattedPrompt?.length ?? 0,
+        formattedPromptStart: (iaScene?.formattedPrompt ?? "").slice(0, 80),
+        videoPromptStart: (iaScene?.videoPrompt ?? "").slice(0, 80),
+      });
+      const sample = [
+        `s${index + 1}`,
+        `fmtOk=${Boolean(iaScene?.formattedPrompt?.trim())}`,
+        `fmtLen=${iaScene?.formattedPrompt?.length ?? 0}`,
+        `fmt="${(iaScene?.formattedPrompt ?? "").slice(0, 80)}"`,
+        `vid="${(iaScene?.videoPrompt ?? "").slice(0, 80)}"`,
+      ].join(" ");
+      checkpoint.productionFormattedPromptOk = Boolean(iaScene?.formattedPrompt?.trim());
+      checkpoint.productionFormattedPromptSample = [checkpoint.productionFormattedPromptSample, sample]
+        .filter(Boolean)
+        .join(" · ")
+        .slice(0, 700);
       if (first) {
         if (parsed.hook.reconstructed) plan.hook = parsed.hook;
         if (parsed.scenario.logline) plan.scenario = parsed.scenario;
@@ -238,14 +259,36 @@ export async function runOneProductionScene(
         }
         if (parsed.visualStyle.lockedPhrase) plan.visualStyle = parsed.visualStyle;
       }
-      parsedScene = parsed.scenes[0] ?? null;
+      parsedScene = iaScene ?? null;
     } catch {
       parsedScene = null;
+      console.info("[PRODUCE DEBUG]", {
+        sceneIndex: index,
+        hasFormattedPrompt: false,
+        formattedPromptLength: 0,
+        formattedPromptStart: "",
+        videoPromptStart: "",
+        parseError: true,
+      });
+      checkpoint.productionFormattedPromptOk = false;
+      checkpoint.productionFormattedPromptSample = `s${index + 1} parseError fmtOk=false`;
     }
+  } else {
+    console.info("[PRODUCE DEBUG]", {
+      sceneIndex: index,
+      hasFormattedPrompt: false,
+      formattedPromptLength: 0,
+      formattedPromptStart: "",
+      videoPromptStart: "",
+      llmOk: false,
+    });
+    checkpoint.productionFormattedPromptOk = false;
+    checkpoint.productionFormattedPromptSample = `s${index + 1} llm-failed fmtOk=false`;
   }
   parsedScene = fallbackScene(analysis, index, parsedScene ?? undefined);
   parsedScene.number = analysis.scenes[index]?.number ?? index + 1;
   if (parsedScene.duration > 10) parsedScene.duration = 10;
+  parsedScene.formattedPrompt = fillSceneFormattedPrompt(analysis, index, parsedScene);
   const scenes = plan.scenes.filter((s) => s.number !== parsedScene!.number);
   scenes.push(parsedScene);
   scenes.sort((a, b) => a.number - b.number);
@@ -293,6 +336,9 @@ export async function runProductionSlice(input: GenerateInput): Promise<Producti
     castValidated: input.checkpoint?.castValidated,
     characters: input.checkpoint?.characters ?? analysis.characters,
     visualStyle: input.checkpoint?.visualStyle ?? analysis.visualStyle,
+    productionFormattedPromptOk: input.checkpoint?.productionFormattedPromptOk,
+    productionFormattedPromptSample: input.checkpoint?.productionFormattedPromptSample,
+    dialogueDebug: input.checkpoint?.dialogueDebug,
   };
   const total = expected;
   const index = Math.max(0, checkpoint.analyzedProductionSceneCount ?? 0);
@@ -331,6 +377,7 @@ export async function runProductionSlice(input: GenerateInput): Promise<Producti
     progress: progressAt(7, {
       productionScenesDone: checkpoint.analyzedProductionSceneCount,
       productionScenesTotal: total,
+      debug: checkpoint.productionFormattedPromptSample,
     }),
   };
 }
@@ -372,5 +419,12 @@ function sealPlan(plan: ProductionPlan, analysis: VideoAnalysis, input: Generate
     console.error("[GUARDS]", isolated);
     production = enforceProductionDialogues(production, analysis, input.mode, input.kind);
   }
+  production = {
+    ...production,
+    scenes: production.scenes.map((scene, i) => ({
+      ...scene,
+      formattedPrompt: fillSceneFormattedPrompt(analysis, i, scene),
+    })),
+  };
   return production;
 }

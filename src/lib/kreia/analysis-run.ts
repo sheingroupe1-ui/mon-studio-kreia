@@ -45,7 +45,7 @@ export type AnalysisRunInput = {
 };
 
 export type AnalysisRunResult =
-  | { ok: true; analysis: VideoAnalysis; production?: ProductionPlan; projectId: string }
+  | { ok: true; analysis: VideoAnalysis; production?: ProductionPlan; projectId: string; checkpoint?: AnalysisCheckpoint }
   | {
       ok: true;
       awaitingCastReview: true;
@@ -296,7 +296,13 @@ export async function runFullVideoAnalysis(input: AnalysisRunInput): Promise<Ana
         checkpoint: result.checkpoint,
       };
     }
-    return { ok: true, analysis: result.analysis, production: result.production, projectId };
+    return {
+      ok: true,
+      analysis: result.analysis,
+      production: result.production,
+      projectId,
+      checkpoint: result.checkpoint,
+    };
   } catch (err) {
     logKreiaError("analyze:orchestrator", err);
     return {

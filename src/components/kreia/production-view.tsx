@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { downloadText, projectToMarkdown } from "@/lib/kreia/export";
 import { dialogueCharCount, matchCharacter, swatchForCharacter } from "@/lib/kreia/engines/dialogues";
 import { formatClock, sceneWindows } from "@/lib/kreia/engines/duration";
+import { formatProductionPromptDebug } from "@/lib/kreia/engines/pass-debug";
 import type { KreiaProject } from "@/lib/kreia/types";
 import { CopyButton } from "./copy-button.tsx";
 import { Field, PromptBlock, SectionCard } from "./section-card.tsx";
@@ -24,9 +25,15 @@ export function ProductionView({
 }) {
   const plan = project.production;
   if (!plan) return null;
+  const produceDebug = formatProductionPromptDebug(project.analysisCheckpoint);
 
   return (
     <div className="space-y-5">
+      {produceDebug ? (
+        <p className="rounded-[var(--radius-md)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[11px] leading-relaxed text-[var(--fg-muted)]">
+          {produceDebug}
+        </p>
+      ) : null}
       <nav className="sticky top-16 z-20 -mx-4 flex gap-2 overflow-x-auto bg-[color-mix(in_oklab,var(--bg)_88%,transparent)] px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-[var(--radius-lg)] sm:px-3">
         {SECTIONS.map((s) => (
           <a
@@ -244,6 +251,11 @@ export function ProductionView({
               <div className="mt-4">
                 <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--fg-subtle)]">
                   Prompt scène — copier dans Flow / Grok / Veo 3
+                </p>
+                <p className="mb-2 font-mono text-[10px] text-[var(--fg-subtle)]">
+                  {scene.formattedPrompt?.trim()
+                    ? `source=formattedPrompt (${scene.formattedPrompt.length} car.) «${scene.formattedPrompt.slice(0, 80)}»`
+                    : `source=videoPrompt (repli, ${scene.videoPrompt.length} car.) «${scene.videoPrompt.slice(0, 80)}»`}
                 </p>
                 <PromptBlock text={scene.formattedPrompt || scene.videoPrompt} />
               </div>

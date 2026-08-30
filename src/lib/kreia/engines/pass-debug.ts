@@ -44,3 +44,20 @@ export function formatDialoguePassDebug(debug?: DialoguePassDebug | null): strin
     .filter(Boolean)
     .join(" | ");
 }
+
+export function formatProductionPromptDebug(checkpoint: {
+  productionFormattedPromptOk?: boolean;
+  productionFormattedPromptSample?: string;
+} | null | undefined): string {
+  if (!checkpoint) return "";
+  if (
+    checkpoint.productionFormattedPromptOk === undefined &&
+    !checkpoint.productionFormattedPromptSample
+  ) {
+    return "";
+  }
+  return [
+    `productionFormattedPromptOk=${checkpoint.productionFormattedPromptOk === true}`,
+    `productionFormattedPromptSample=${checkpoint.productionFormattedPromptSample || "none"}`,
+  ].join(" | ");
+}

@@ -342,6 +342,8 @@ export type AnalysisCheckpoint = {
   castValidated?: boolean;
   dialoguesValidated?: boolean;
   dialogueDebug?: import("./engines/pass-debug").DialoguePassDebug;
+  productionFormattedPromptOk?: boolean;
+  productionFormattedPromptSample?: string;
   analysis?: VideoAnalysis;
   production?: ProductionPlan;
   userBrief?: UserBrief;
