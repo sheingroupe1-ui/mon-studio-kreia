@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { composeSceneDossier, fillSceneFormattedPrompt, looksLikeSceneDossier } from "./prompt-dossier.ts";
+import { composeSceneDossier, fillSceneFormattedPrompt, looksLikeSceneDossier, withFormattedPrompts } from "./prompt-dossier.ts";
 import type { CharacterSheet, SceneAnalysis, SceneProduction, VideoAnalysis, VisualStyleAnalysis } from "../types.ts";
 
 function sheet(partial: Partial<CharacterSheet> & Pick<CharacterSheet, "id" | "designation">): CharacterSheet {
@@ -122,10 +122,13 @@ describe("composeSceneDossier", () => {
     assert.match(prompt, /Paul/);
     assert.equal(prompt.includes("Jean"), false);
     assert.match(prompt, /Tu savais/);
+    assert.match(prompt, /\(réplique complète\) « Tu savais/);
     assert.equal(prompt.includes("Laissez-moi"), false);
     assert.match(prompt, /TOTAL DIALOGUES :/);
     assert.match(prompt, /Aucun chevauchement vocal/);
     assert.match(prompt, /Story Rule/);
+    assert.equal(prompt.includes("CHARACTER_"), false);
+    assert.equal(prompt.includes("Non observé"), false);
   });
 
   it("writes Aucun dialogue when the window has no replica", () => {
@@ -209,21 +212,38 @@ describe("fillSceneFormattedPrompt", () => {
     assert.match(filled, /Marie/);
   });
 
-  it("keeps a valid IA dossier", () => {
+  it("rewrites a stored dossier that still contains technical IDs", () => {
     const analysis = {
-      characters: [],
-      visualStyle: { lockedStylePhrase: "pixar" } as VisualStyleAnalysis,
-      scenes: [],
+      characters: [sheet({ id: "FRUIT_CHARACTER_01", designation: "Grand brocoli" })],
+      visualStyle: { lockedStylePhrase: "3D cinématographique, 3D cinématographique" } as VisualStyleAnalysis,
+      scenes: [
+        {
+          number: 1,
+          estimatedDuration: 10,
+          startHint: "00:00",
+          characters: ["FRUIT_CHARACTER_01"],
+          setting: "Plateforme",
+          action: "FRUIT_CHARACTER_01 tient un livre",
+          emotion: "fierté",
+          camera: "",
+          lighting: "",
+          audio: "",
+          dialogue: null,
+          dialogueSpeaker: null,
+          styleNotes: "",
+          confidence: "observed",
+          silentReactions: [],
+        } satisfies SceneAnalysis,
+      ],
       dialogues: { language: "fr", source: "unavailable", rawTranscript: null, lines: [] },
     } as unknown as VideoAnalysis;
-    const kept = `🎬 SCÈNE 2 — Le regard\n\n⏱️ DURÉE : 8 SECONDES\n\n🎨 STYLE D'ANIMATION\n\npixar`;
     const scene: SceneProduction = {
-      number: 2,
-      duration: 8,
-      characters: [],
-      location: "",
-      action: "",
-      emotion: "",
+      number: 1,
+      duration: 10,
+      characters: ["FRUIT_CHARACTER_01"],
+      location: "Plateforme",
+      action: "FRUIT_CHARACTER_01 tient un livre",
+      emotion: "fierté",
       camera: "",
       lighting: "",
       visualStyle: "",
@@ -231,8 +251,70 @@ describe("fillSceneFormattedPrompt", () => {
       dialogue: null,
       videoPrompt: "short",
       continuityNotes: "",
-      formattedPrompt: kept,
+      formattedPrompt: "🎬 SCÈNE 1 — FRUIT_CHARACTER_01\n⏱️ DURÉE : 10 SECONDES",
     };
-    assert.equal(fillSceneFormattedPrompt(analysis, 1, scene), kept);
+    const filled = fillSceneFormattedPrompt(analysis, 0, scene);
+    assert.match(filled, /Grand brocoli/);
+    assert.equal(filled.includes("FRUIT_CHARACTER_"), false);
+    const styleSection = filled.split("👥")[0] ?? filled;
+    assert.equal((styleSection.match(/3D cinématographique/g) ?? []).length, 1);
+  });
+});
+
+describe("withFormattedPrompts", () => {
+  it("fills empty formattedPrompt so the UI never falls back to videoPrompt dump", () => {
+    const analysis = {
+      characters: [sheet({ id: "CHARACTER_01", designation: "Marie", clothing: "robe" })],
+      visualStyle: { lockedStylePhrase: "3D cinématographique" } as VisualStyleAnalysis,
+      scenes: [
+        {
+          number: 1,
+          estimatedDuration: 10,
+          startHint: "00:00",
+          characters: ["CHARACTER_01"],
+          setting: "Cuisine",
+          action: "Marie ouvre la porte",
+          emotion: "tension",
+          camera: "plan large",
+          lighting: "",
+          audio: "",
+          dialogue: null,
+          dialogueSpeaker: null,
+          styleNotes: "",
+          confidence: "observed",
+          silentReactions: [],
+        } satisfies SceneAnalysis,
+      ],
+      dialogues: { language: "fr", source: "unavailable", rawTranscript: null, lines: [] },
+    } as unknown as VideoAnalysis;
+    const plan = withFormattedPrompts(
+      {
+        hook: { reconstructed: "", visualPrompt: "", duration: 10, mechanism: "" },
+        scenario: { logline: "", synopsis: "", structure: "", dialoguesNote: "" },
+        characters: [{ id: "CHARACTER_01", bible: "Marie", imagePrompt: "Marie portrait" }],
+        visualStyle: { lockedPhrase: "3D", productionNotes: "", doNot: [] },
+        scenes: [
+          {
+            number: 1,
+            duration: 10,
+            characters: ["CHARACTER_01"],
+            location: "Cuisine",
+            action: "Marie ouvre la porte",
+            emotion: "tension",
+            camera: "plan large",
+            lighting: "",
+            visualStyle: "",
+            audio: "",
+            dialogue: null,
+            videoPrompt: "Scène en 3D cinématographique, éclairage studio, textures détaillées, caméra de ",
+            continuityNotes: "",
+            formattedPrompt: "",
+          },
+        ],
+      },
+      analysis,
+    );
+    assert.match(plan.scenes[0]!.formattedPrompt ?? "", /🎬 SCÈNE 1/);
+    assert.match(plan.characters[0]!.formattedSheet ?? "", /Marie/);
   });
 });

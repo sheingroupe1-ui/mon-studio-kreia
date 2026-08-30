@@ -987,7 +987,7 @@ export function formatLockedDialogue(lines: DialogueLine[]): string | null {
     if (!spoken) continue;
     const who = line.speakerLabel.trim() || "Locuteur à vérifier";
     const mark = line.attribution === "unverified" ? " [attribution à vérifier]" : line.confidence === "uncertain" ? " [incertain]" : line.confidence === "inaudible" ? " [inaudible]" : "";
-    parts.push(`${who} : « ${spoken} »${mark}`);
+    parts.push(`${who} : (réplique complète) « ${spoken} »${mark}`);
   }
   return parts.length ? parts.join("\n") : null;
 }
@@ -1008,7 +1008,7 @@ export function formatAttributedPromptBlock(
     const swatch = swatchForCharacter(character, Math.max(0, idx));
     const who = character ? displayCharacterName(character) : line.speakerLabel || "LOCUTEUR À VÉRIFIER";
     parts.push(
-      `${swatch.mark} ${who.toUpperCase()} — RÉPLIQUE ${line.order}\n${formatPerformancePrompt(line)}\nDialogue exact :\n« ${spoken} »`,
+      `${swatch.mark} ${who.toUpperCase()} — RÉPLIQUE ${line.order}\n${formatPerformancePrompt(line)}\nDialogue exact (réplique complète) :\n« ${spoken} »`,
     );
   }
   return parts.length ? parts.join("\n\n") : null;

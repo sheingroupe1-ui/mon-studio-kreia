@@ -1,5 +1,6 @@
 import type { KreiaProject, ProjectKind } from "./types";
 import { kindById } from "./kinds";
+import { withFormattedPrompts } from "./engines/prompt-dossier";
 
 function kindByIdSafe(kind: ProjectKind): string {
   try {
@@ -15,7 +16,7 @@ function block(title: string, body: string) {
 
 export function projectToMarkdown(project: KreiaProject): string {
   const a = project.analysis;
-  const p = project.production;
+  const p = a && project.production ? withFormattedPrompts(project.production, a) : project.production;
   const lines: string[] = [
     `# ${project.title}`,
     "",

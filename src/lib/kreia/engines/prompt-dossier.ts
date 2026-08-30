@@ -1,16 +1,48 @@
 import { dialogueCharCount, displayCharacterName, formatLockedDialogue, linesForScene } from "./dialogues.ts";
-import { styleBlock } from "./identity.ts";
+import { composeCharacterDossier, styleBlock } from "./identity.ts";
 import { sceneRelationshipNotes } from "./relationships.ts";
 import type {
   CharacterSheet,
   DialogueLine,
+  ProductionPlan,
   SceneProduction,
   VideoAnalysis,
 } from "../types";
 
-function obs(value: string | undefined | null, fallback = "Non observé dans la source."): string {
-  const text = (value ?? "").trim();
-  return text || fallback;
+function observed(value: string | undefined | null): string {
+  return (value ?? "").trim();
+}
+
+function compactStyle(style: string): string {
+  const parts = style
+    .split(/[,;]/)
+    .map((part) => part.trim().replace(/\s+/g, " "))
+    .filter(Boolean);
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const part of parts) {
+    const key = part.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(part);
+  }
+  return unique.join(", ");
+}
+
+function humanizeIds(text: string, analysis: VideoAnalysis): string {
+  if (!text) return "";
+  let out = text;
+  const sheets = [...(analysis.characters ?? [])].sort((a, b) => b.id.length - a.id.length);
+  for (const sheet of sheets) {
+    const name = displayCharacterName(sheet);
+    if (!sheet.id || !name || name === sheet.id) continue;
+    out = out.split(sheet.id).join(name);
+  }
+  return out
+    .replace(/\b(?:FRUIT_|ANGEL_)?CHARACTER_\d+\b/g, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/ +\n/g, "\n")
+    .trim();
 }
 
 function presentSheets(analysis: VideoAnalysis, ids: string[]): CharacterSheet[] {
@@ -25,33 +57,39 @@ function actingBlock(
   lines: DialogueLine[],
   silent: VideoAnalysis["scenes"][number]["silentReactions"],
 ): string {
-  if (!sheets.length) return obs(sceneEmotion, "Émotions telles qu'observées dans la source.");
-  return sheets
+  const chunks = sheets
     .map((sheet) => {
-      const name = displayCharacterName(sheet);
       const spoken = lines.find((l) => l.speakerId === sheet.id);
       const perf = spoken?.performance;
       const silentHit = silent.find((s) => s.characterId === sheet.id);
       const rows = [
-        `émotion : ${obs(perf?.emotionDominant || spoken?.emotion || sceneEmotion)}`,
-        `regard : ${obs(perf?.gaze || silentHit?.gaze)}`,
-        `expression : ${obs(perf?.facialExpression || silentHit?.expression)}`,
-        `posture : ${obs(perf?.posture || silentHit?.posture)}`,
-        `gestes : ${obs(perf?.gesture || silentHit?.gesture)}`,
-        perf?.tears && `larmes : ${perf.tears}`,
-        perf?.tone && `ton : ${perf.tone}`,
-        perf?.evolution && `évolution : ${perf.evolution}`,
+        observed(perf?.emotionDominant || spoken?.emotion) &&
+          `émotion : ${observed(perf?.emotionDominant || spoken?.emotion)}`,
+        observed(perf?.gaze || silentHit?.gaze) && `regard : ${observed(perf?.gaze || silentHit?.gaze)}`,
+        observed(perf?.facialExpression || silentHit?.expression) &&
+          `expression : ${observed(perf?.facialExpression || silentHit?.expression)}`,
+        observed(perf?.posture || silentHit?.posture) &&
+          `posture : ${observed(perf?.posture || silentHit?.posture)}`,
+        observed(perf?.gesture || silentHit?.gesture) &&
+          `gestes : ${observed(perf?.gesture || silentHit?.gesture)}`,
+        observed(perf?.tears) && `larmes : ${observed(perf?.tears)}`,
+        observed(perf?.tone) && `ton : ${observed(perf?.tone)}`,
+        observed(perf?.evolution) && `évolution : ${observed(perf?.evolution)}`,
       ].filter(Boolean);
-      return `${name} :\n${rows.map((row) => `- ${row}`).join("\n")}`;
+      if (!rows.length) return "";
+      return `${displayCharacterName(sheet)} :\n${rows.map((row) => `- ${row}`).join("\n")}`;
     })
-    .join("\n\n");
+    .filter(Boolean);
+  if (chunks.length) return chunks.join("\n\n");
+  const shared = observed(sceneEmotion);
+  return shared ? `Ton de la scène : ${shared}.` : "Jeu d'acteur fidèle à la source, sans exagération.";
 }
 
 function cameraBeats(duration: number, camera: string, action: string): string {
   const total = duration > 0 ? duration : 10;
   const a = Math.max(1, Math.round(total * 0.4));
   const b = Math.max(a + 1, Math.round(total * 0.7));
-  const shot = obs(camera, "Cadrage stable, sans mouvement spectaculaire non observé.");
+  const shot = observed(camera) || "Cadrage stable, sans mouvement spectaculaire non observé.";
   return [
     `0–${a} secondes :`,
     shot,
@@ -67,7 +105,7 @@ function cameraBeats(duration: number, camera: string, action: string): string {
     .join("\n");
 }
 
-function replicaBlock(lines: DialogueLine[]): { text: string; chars: number } {
+function replicaBlock(lines: DialogueLine[], analysis: VideoAnalysis): { text: string; chars: number } {
   const locked = formatLockedDialogue(lines);
   if (!locked) {
     return { text: "Aucun dialogue.", chars: 0 };
@@ -76,13 +114,18 @@ function replicaBlock(lines: DialogueLine[]): { text: string; chars: number } {
   for (const line of lines) {
     const spoken = (line.displayText || line.sourceText).trim();
     if (!spoken) continue;
-    const who = line.speakerLabel.trim() || "Locuteur à vérifier";
+    const sheet = analysis.characters.find((c) => c.id === line.speakerId);
+    const who = sheet
+      ? displayCharacterName(sheet)
+      : humanizeIds(line.speakerLabel, analysis) || "Locuteur à vérifier";
     const list = grouped.get(who) ?? [];
     list.push(spoken);
     grouped.set(who, list);
   }
   const text = [...grouped.entries()]
-    .map(([who, replicas]) => `${who} :\n${replicas.map((r) => `« ${r} »`).join("\n")}`)
+    .map(([who, replicas]) =>
+      `${who} :\n${replicas.map((r) => `(réplique complète) « ${r} »`).join("\n")}`,
+    )
     .join("\n\n");
   return { text, chars: dialogueCharCount(lines) };
 }
@@ -99,16 +142,16 @@ function flowBlock(args: {
   const names = args.present.map(displayCharacterName).join(", ") || "aucun personnage supplémentaire";
   return [
     "Story Rule :",
-    obs(args.action),
+    observed(args.action) || "Reproduire uniquement l'action observée.",
     "",
     "Visible Characters Only :",
     names,
     "",
     "Location :",
-    obs(args.location),
+    observed(args.location) || "Décor de la vidéo source.",
     "",
     "Camera :",
-    obs(args.camera, "Cadrage observé, sans mouvement inventé."),
+    observed(args.camera) || "Cadrage observé, sans mouvement inventé.",
     "",
     "Timeline :",
     `Déroulement sur ${args.duration} secondes, sans dépasser 10 secondes.`,
@@ -125,7 +168,9 @@ function flowBlock(args: {
     "- Une seule personne parle à la fois. Aucun dialogue supplémentaire. Aucun chevauchement vocal.",
     "- Répliques en français uniquement. Aucun sous-titre. Aucun texte à l'écran.",
     `- Style visuel : ${args.style}`,
-    args.replicas === "Aucun dialogue." ? "- Aucune réplique inventée." : "- Répliques exactes, dans l'ordre, uniquement celles de cette scène.",
+    args.replicas === "Aucun dialogue."
+      ? "- Aucune réplique inventée."
+      : "- Répliques exactes, dans l'ordre, uniquement celles de cette scène.",
   ].join("\n");
 }
 
@@ -147,18 +192,25 @@ export function composeSceneDossier(
     ),
   ];
   const present = presentSheets(analysis, presentIds);
-  const style = extras?.visualStyle || styleBlock(analysis);
-  const location = extras?.location || scene?.setting || "";
-  const action = extras?.action || scene?.action || "";
-  const emotion = extras?.emotion || scene?.emotion || "";
-  const camera = extras?.camera || scene?.camera || "";
-  const lighting = extras?.lighting || scene?.lighting || "";
+  const style = compactStyle(extras?.visualStyle || styleBlock(analysis));
+  const location = humanizeIds(extras?.location || scene?.setting || "", analysis);
+  const action = humanizeIds(extras?.action || scene?.action || "", analysis);
+  const emotion = humanizeIds(extras?.emotion || scene?.emotion || "", analysis);
+  const camera = humanizeIds(extras?.camera || scene?.camera || "", analysis);
+  const lighting = humanizeIds(extras?.lighting || scene?.lighting || "", analysis);
   const clothing = present.length
-    ? present.map((c) => `${displayCharacterName(c)} : ${obs(c.clothing, "tenue observée dans la source")}`).join("\n")
-    : "Non observé.";
-  const replicas = replicaBlock(owned);
-  const title = (action || location || `Scène ${number}`).slice(0, 80);
-  const relations = sceneRelationshipNotes(analysis.characters, presentIds);
+    ? present
+        .map((c) => {
+          const wear = observed(c.clothing);
+          return wear ? `${displayCharacterName(c)} : ${wear}` : "";
+        })
+        .filter(Boolean)
+        .join("\n") || "Tenues identiques aux fiches personnages."
+    : "Tenues identiques aux fiches personnages.";
+  const replicas = replicaBlock(owned, analysis);
+  const names = present.map(displayCharacterName).filter(Boolean);
+  const title = (action || location || names.join(", ") || `Scène ${number}`).slice(0, 90);
+  const relations = humanizeIds(sceneRelationshipNotes(analysis.characters, presentIds), analysis);
 
   return [
     `🎬 SCÈNE ${number} — ${title}`,
@@ -171,12 +223,12 @@ export function composeSceneDossier(
     "",
     "👥 PERSONNAGES PRÉSENTS",
     "",
-    present.length ? present.map((c) => displayCharacterName(c)).join("\n") : "Aucun personnage identifié dans cette fenêtre.",
-    relations ? `\nRelations : ${relations}` : "",
+    names.length ? names.join("\n") : "Aucun personnage identifié dans cette fenêtre.",
+    relations ? `\nRelations :\n${relations}` : "",
     "",
     "📍 LIEU",
     "",
-    obs(location),
+    location || "Décor de la vidéo source.",
     lighting && `Lumière : ${lighting}`,
     "",
     "CONTINUITÉ DU DÉCOR ABSOLUE :",
@@ -188,7 +240,7 @@ export function composeSceneDossier(
     "",
     "📖 DESCRIPTION DE LA SCÈNE",
     "",
-    obs(action),
+    action || "Action telle qu'observée dans cette fenêtre de 10 secondes.",
     "",
     "🎭 ÉMOTIONS ET JEU D'ACTEUR",
     "",
@@ -207,12 +259,13 @@ export function composeSceneDossier(
     "👄 SYNCHRONISATION LABIALE",
     "",
     "Une seule personne parle à la fois.",
+    "Chaque réplique est dite entièrement (réplique complète), sans coupure, sans résumé, sans mot avalé.",
     "Pendant la réplique d'un personnage, les autres gardent la bouche fermée.",
     "Aucun chevauchement vocal. Aucune parole supplémentaire. Aucune improvisation.",
     "",
     "🔊 VOLUME ET TON DES VOIX",
     "",
-    obs(scene?.audio || extras?.audio, "Volume naturel, ton conforme à l'émotion observée."),
+    observed(scene?.audio || extras?.audio) || "Volume naturel, ton conforme à l'émotion observée.",
     "",
     "🎬 BLOC COMPLET FLOW / GROK / VEO 3",
     "",
@@ -243,6 +296,24 @@ export function fillSceneFormattedPrompt(
   index: number,
   scene: SceneProduction,
 ): string {
-  if (looksLikeSceneDossier(scene.formattedPrompt)) return scene.formattedPrompt!.trim();
   return composeSceneDossier(analysis, index, scene);
+}
+
+export function withFormattedPrompts(plan: ProductionPlan, analysis: VideoAnalysis): ProductionPlan {
+  return {
+    ...plan,
+    characters: plan.characters.map((entry) => {
+      const sheet = analysis.characters.find((c) => c.id === entry.id);
+      const dossier = sheet ? composeCharacterDossier(sheet, analysis) : "";
+      const existing = entry.formattedSheet?.trim() ?? "";
+      return {
+        ...entry,
+        formattedSheet: existing.length > 40 ? existing : dossier || existing,
+      };
+    }),
+    scenes: plan.scenes.map((scene, i) => ({
+      ...scene,
+      formattedPrompt: fillSceneFormattedPrompt(analysis, i, scene),
+    })),
+  };
 }

@@ -3,6 +3,7 @@ import { ideaPhaseSystem, ideaPhaseUser } from "./engines/idea-prompt";
 import { identityParagraph } from "./engines/identity";
 import { chat, fail, NETWORK_MESSAGE, type OkErr } from "./llm";
 import { extractJson, parseAnalysis, parseCharacter, parseProduction } from "./parse";
+import { withFormattedPrompts } from "./engines/prompt-dossier";
 import { ideaPhaseLabel, ideaProgressAt, nextIdeaPhase } from "./idea-stages";
 import type { AnalysisProgress } from "./analysis-stages";
 import type {
@@ -352,7 +353,7 @@ export async function runIdeaSlice(args: {
         /* already shaped */
       }
       cp.analysis = analysis;
-      cp.production = production;
+      cp.production = withFormattedPrompts(production, analysis);
       cp.completed = Array.from(new Set([...cp.completed, phase]));
       cp.phase = "prepare";
       return {

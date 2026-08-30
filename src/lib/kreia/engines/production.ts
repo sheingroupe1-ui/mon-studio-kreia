@@ -3,7 +3,7 @@ import { enforceProductionDialogues, fitDialoguesToScenes, formatLockedDialogue,
 import { validateIsolatedProduction } from "./guards";
 import { sceneRelationshipNotes } from "./relationships";
 import { composeCharacterDossier, composeCharacterImagePrompt, enforceProductionIdentity, identityParagraph } from "./identity";
-import { fillSceneFormattedPrompt } from "./prompt-dossier";
+import { fillSceneFormattedPrompt, withFormattedPrompts } from "./prompt-dossier";
 import { expandCharacterIds } from "./continuity";
 import { chat, fail, NETWORK_MESSAGE, type OkErr } from "../llm";
 import { extractJson, parseProduction } from "../parse";
@@ -419,12 +419,6 @@ function sealPlan(plan: ProductionPlan, analysis: VideoAnalysis, input: Generate
     console.error("[GUARDS]", isolated);
     production = enforceProductionDialogues(production, analysis, input.mode, input.kind);
   }
-  production = {
-    ...production,
-    scenes: production.scenes.map((scene, i) => ({
-      ...scene,
-      formattedPrompt: fillSceneFormattedPrompt(analysis, i, scene),
-    })),
-  };
+  production = withFormattedPrompts(production, analysis);
   return production;
 }

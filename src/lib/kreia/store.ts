@@ -18,6 +18,7 @@ import type {
 } from "./types";
 import type { UserBrief } from "./user-brief";
 import { durationFromProject, splitAnalysis, splitProduction } from "./engines/split-plan";
+import { withFormattedPrompts } from "./engines/prompt-dossier";
 
 type KreiaState = {
   hydrated: boolean;
@@ -148,8 +149,11 @@ export const useKreia = create<KreiaState>((set, get) => ({
   },
 
   setProduction: async (production) => {
+    const current = get().current;
+    const filled =
+      current?.analysis ? withFormattedPrompts(production, current.analysis) : production;
     await get().patchCurrent({
-      production,
+      production: filled,
       status: "complete",
       errorMessage: undefined,
     });

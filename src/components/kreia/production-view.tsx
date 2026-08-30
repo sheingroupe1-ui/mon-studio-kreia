@@ -5,6 +5,7 @@ import { downloadText, projectToMarkdown } from "@/lib/kreia/export";
 import { dialogueCharCount, matchCharacter, swatchForCharacter } from "@/lib/kreia/engines/dialogues";
 import { formatClock, sceneWindows } from "@/lib/kreia/engines/duration";
 import { formatProductionPromptDebug } from "@/lib/kreia/engines/pass-debug";
+import { withFormattedPrompts } from "@/lib/kreia/engines/prompt-dossier";
 import type { KreiaProject } from "@/lib/kreia/types";
 import { CopyButton } from "./copy-button.tsx";
 import { Field, PromptBlock, SectionCard } from "./section-card.tsx";
@@ -23,8 +24,9 @@ export function ProductionView({
   project: KreiaProject;
   onEdit?: (focus: string) => void;
 }) {
-  const plan = project.production;
-  if (!plan) return null;
+  const raw = project.production;
+  if (!raw) return null;
+  const plan = project.analysis ? withFormattedPrompts(raw, project.analysis) : raw;
   const produceDebug = formatProductionPromptDebug(project.analysisCheckpoint);
 
   return (

@@ -24,6 +24,7 @@ import {
   type OkErr,
 } from "./llm";
 import { extractJson, parseAnalysis, parseProduction } from "./parse";
+import { withFormattedPrompts } from "./engines/prompt-dossier";
 import { runAnalysisPipeline } from "./pipeline";
 import type { AnalysisProgress } from "./analysis-stages";
 import type {
@@ -232,8 +233,11 @@ export async function runGenerate(
     if (first) production.hook.duration = first.duration;
     return {
       ok: true,
-      production: enforceProductionIdentity(
-        enforceProductionDialogues(production, data.analysis, data.mode, data.kind),
+      production: withFormattedPrompts(
+        enforceProductionIdentity(
+          enforceProductionDialogues(production, data.analysis, data.mode, data.kind),
+          data.analysis,
+        ),
         data.analysis,
       ),
     };
@@ -270,8 +274,11 @@ export async function runReviseProduction(
     }
     return {
       ok: true,
-      production: enforceProductionIdentity(
-        enforceProductionDialogues(production, data.analysis, data.mode, data.kind),
+      production: withFormattedPrompts(
+        enforceProductionIdentity(
+          enforceProductionDialogues(production, data.analysis, data.mode, data.kind),
+          data.analysis,
+        ),
         data.analysis,
       ),
     };
