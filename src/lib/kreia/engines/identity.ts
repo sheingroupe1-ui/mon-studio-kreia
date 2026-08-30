@@ -85,6 +85,23 @@ export function identityFingerprint(c: CharacterSheet): string {
     .join(" · ");
 }
 
+function obs(value: string | undefined | null, fallback = "Non observé dans la source."): string {
+  const text = (value ?? "").trim();
+  return text || fallback;
+}
+
+export function styleBlock(analysis: VideoAnalysis): string {
+  const weave = styleWeave(analysis.visualStyle);
+  const extras = [
+    analysis.visualStyle.atmosphere,
+    analysis.visualStyle.colorTemperature && `température ${analysis.visualStyle.colorTemperature}`,
+    analysis.visualStyle.depthOfField && `profondeur de champ ${analysis.visualStyle.depthOfField}`,
+    analysis.visualStyle.detailLevel && `niveau de détail ${analysis.visualStyle.detailLevel}`,
+  ].filter(Boolean);
+  const line = [...new Set([weave, ...extras].filter(Boolean))].join(", ");
+  return line || "Style visuel de la vidéo source, qualité cinéma, éclairage cohérent, textures détaillées.";
+}
+
 export function identityParagraph(c: CharacterSheet): string {
   const type = labelCharacterType(c.characterType);
   const name = c.name || c.designation || c.id;
@@ -108,34 +125,117 @@ export function identityParagraph(c: CharacterSheet): string {
   return bits.join(". ");
 }
 
+export function composeCharacterDossier(character: CharacterSheet, analysis: VideoAnalysis): string {
+  const name = (character.name || character.designation || character.id).trim();
+  const type = character.characterType;
+  const style = styleBlock(analysis);
+  const fruit = type === "fruit_humanoid";
+  const angel = type === "angel";
+  const header = fruit
+    ? `${name} — ${obs(character.species, "fruit humanoïde")} HUMANOÏDE`
+    : angel
+      ? `${name} — ANGE HUMANOÏDE CÉLESTE`
+      : `NOM : ${name}`;
+
+  const bans = fruit
+    ? [
+        `Interdit de transformer ${name} en humain.`,
+        `Interdit d'en faire un humain avec ${obs(character.species, "un fruit")} posé sur la tête ou porté comme accessoire.`,
+        "Interdit de changer d'espèce, de couleur de fruit, de texture ou de morphologie.",
+        "Interdit d'ajouter des membres, visages ou costumes absents de la fiche.",
+      ].join("\n")
+    : angel
+      ? [
+          character.wings?.trim()
+            ? "Conserver les ailes exactement telles qu'observées."
+            : "Ne pas inventer d'ailes, de halo, de robe blanche ou de lueur dorée absents de la source.",
+          "Interdit de transformer l'ange en humain ordinaire.",
+          "Interdit de changer visage, teint, yeux, cheveux, morphologie.",
+          "Ne pas inventer de pouvoirs surnaturels non observés.",
+        ].join("\n")
+      : [
+          "Interdit de changer visage, teint, yeux, coiffure, morphologie, âge apparent.",
+          "Interdit d'ajouter des personnages, accessoires ou vêtements non observés.",
+          "Les changements de tenue ne sont autorisés que s'ils sont justifiés par la scène source.",
+        ].join("\n");
+
+  const continuity = fruit
+    ? "RÈGLE DE CONTINUITÉ ABSOLUE :\nLe personnage reste exactement le même dans toutes les scènes. Ne jamais modifier son espèce, son fruit, sa couleur, sa texture, son visage, ses yeux, sa bouche, sa morphologie, ses proportions."
+    : angel
+      ? "RÈGLE DE CONTINUITÉ ABSOLUE :\nLe visage, le teint, les yeux, les cheveux, la morphologie, les ailes observées et les caractéristiques physiques restent identiques."
+      : "RÈGLE DE CONTINUITÉ :\nLe visage, le teint, les yeux, les traits, la coiffure, la morphologie et les caractéristiques physiques restent strictement identiques.";
+
+  return [
+    header,
+    "",
+    "Identité :",
+    `Nom : ${name}`,
+    `Sexe : ${obs(character.sex)}`,
+    `Espèce : ${obs(character.species, fruit ? "fruit humanoïde" : angel ? "ange humanoïde" : "humain")}`,
+    `Âge apparent : ${obs(character.ageApparent)}`,
+    "",
+    "APPARENCE PHYSIQUE VERROUILLÉE :",
+    obs(character.appearance),
+    character.bodyStructure ? `Structure / proportions : ${character.bodyStructure}` : "",
+    character.morphology ? `Morphologie : ${character.morphology}` : "",
+    character.complexion
+      ? fruit
+        ? `Couleur et texture du fruit : ${character.complexion}`
+        : `Teint : ${character.complexion}`
+      : "",
+    character.distinctiveFeatures ? `Particularités physiques : ${character.distinctiveFeatures}` : "",
+    fruit
+      ? "Ce personnage EST un fruit humanoïde : le fruit constitue son corps et son identité visuelle. Ce n'est pas un humain déguisé, ni un humain portant un fruit."
+      : "",
+    "",
+    "VISAGE ET EXPRESSIONS :",
+    character.eyes ? `Yeux : ${character.eyes}` : "",
+    !fruit && character.hair ? `Coiffure : ${character.hair}` : "",
+    "",
+    fruit
+      ? ""
+      : ["CORPS :", `Silhouette / morphologie : ${obs(character.morphology)}`, character.bodyStructure ? `Proportions : ${character.bodyStructure}` : ""]
+          .filter(Boolean)
+          .join("\n"),
+    "",
+    "VÊTEMENTS :",
+    obs(character.clothing, "Aucun vêtement distinct observé."),
+    character.accessories ? `ACCESSOIRES : ${character.accessories}` : "",
+    "",
+    angel
+      ? [
+          "AILES :",
+          obs(character.wings, "Aucune aile visible dans la source — ne pas en inventer."),
+          character.halo ? `AURA / HALO (observé uniquement) : ${character.halo}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "",
+    "",
+    "PERSONNALITÉ :",
+    obs(character.personality, "Comportement tel qu'observé à l'écran."),
+    character.role ? `SITUATION / RÔLE : ${character.role}` : "",
+    character.relationships ? `Relations : ${character.relationships}` : "",
+    "",
+    "STYLE VISUEL :",
+    style,
+    "",
+    continuity,
+    "",
+    "INTERDICTIONS :",
+    bans,
+  ]
+    .filter((block) => Boolean(block))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export function composeCharacterImagePrompt(
   character: CharacterSheet,
   analysis: VideoAnalysis,
 ): string {
-  const weave = styleWeave(analysis.visualStyle);
-  const type = character.characterType;
-  const name = character.name || character.designation || character.id;
-  const head =
-    type === "fruit_humanoid"
-      ? `Create a reference portrait of ${name}, a fruit-humanoid character (${character.species || "fruit species as seen in the source"}), body-fruit with humanoid limbs`
-      : type === "angel"
-        ? `Create a reference portrait of ${name}, an angel character matching the source exactly`
-        : `Create a reference portrait of ${name}`;
-  const identity = identityParagraph(character);
-  const noInvent =
-    type === "angel"
-      ? "Do not invent wings, halo, white robes, golden glow or religious symbols unless listed above as observed."
-      : type === "fruit_humanoid"
-        ? "Do not change fruit species, seed pattern, body-fruit proportions, or clothing. Not a human."
-        : "Keep face, eyes, hair, skin, body proportions and clothing identical to the locked identity.";
-  return [
-    `${head}, rendered in the same ${weave || "visual style as the source video"}, highly detailed, consistent proportions, immediately recognizable.`,
-    identity,
-    noInvent,
-    "Medium shot portrait, simple background coherent with the source universe, cinematic lighting matching the reference. Identity lock: do not redesign this character.",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  return composeCharacterDossier(character, analysis);
 }
 
 export function weaveStyleIntoPrompt(prompt: string, analysis: VideoAnalysis): string {
@@ -157,16 +257,12 @@ export function enforceProductionIdentity(
     if (!sheet) {
       return { ...entry, imagePrompt: weaveStyleIntoPrompt(entry.imagePrompt, analysis) };
     }
-    return {
-      ...entry,
-      bible: identityParagraph(sheet),
-      imagePrompt: composeCharacterImagePrompt(sheet, analysis),
-    };
+    const dossier = composeCharacterDossier(sheet, analysis);
+    return { ...entry, bible: dossier, imagePrompt: dossier };
   });
   const scenes = production.scenes.map((scene) => ({
     ...scene,
-    visualStyle: styleWeave(analysis.visualStyle) || scene.visualStyle,
-    videoPrompt: weaveStyleIntoPrompt(scene.videoPrompt, analysis),
+    visualStyle: styleBlock(analysis) || scene.visualStyle,
   }));
   return {
     ...production,

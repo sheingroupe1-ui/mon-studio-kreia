@@ -58,8 +58,8 @@ RÈGLES
 - Le hook n'ajoute PAS de durée : c'est le début de la scène 1, pas une scène supplémentaire.
 - Continuité : vêtements, lumière, décor, époque, météo. Une scène est la suite de la précédente.
 - Ne pas changer de style (pas de photoréaliste si la source est 3D cartoon, etc.).
-- Prompts professionnels, en anglais pour les champs imagePrompt et videoPrompt (meilleure compatibilité des moteurs), reste du plan en français.
-- videoPrompt : un bloc continu, précis, prêt à coller (sujet, action, caméra, lumière, style, audio, contraintes).
+- Prompts professionnels en français, structurés, prêts à copier-coller (Flow / Grok / Veo 3).
+- videoPrompt : dossier de production FR structuré (style, personnages présents uniquement, lieu, vêtements, description, jeu d'acteur, répliques FR exactes de CETTE scène, total caractères, caméra, synchro labiale, bloc Flow/Veo). Jamais un résumé d'une ligne. Jamais les dialogues d'une autre scène. Si aucun dialogue : « Aucun dialogue. »
 - Si un dialogue est verrouillé pour la scène, le videoPrompt DOIT contenir la réplique en FRANÇAIS (sens fidèle) ET son interprétation observée (émotion, expression, geste, regard, ton, larmes). Interdit d'inventer ou d'adoucir. Aucune réplique parlée dans une autre langue.
 - Si des larmes / un cri / un tremblement / un geste important sont dans l'analyse, les reproduire. Ne pas inventer de gestes absents.
 - imagePrompt : portrait de référence, cadrage plan américain ou portrait, fond simple cohérent avec l'univers, éclairage adapté.
@@ -159,8 +159,8 @@ Génère le JSON :
   "characters": [
     {
       "id": "CHARACTER_01",
-      "bible": "string FR — fiche d'identité complète (type, visage, corps, vêtements, éléments observés)",
-      "imagePrompt": "string EN — UN SEUL paragraphe autonome : style de la source TISSÉ dans la description + identité verrouillée. Pas de ligne STYLE: à part."
+      "bible": "string FR — fiche complète (identité, apparence verrouillée, visage, corps, vêtements, style visuel intégré, continuité, interdictions)",
+      "imagePrompt": "string FR — même fiche complète, prête à copier-coller, style visuel intégré. Fruit humanoïde = le fruit EST le corps, pas un humain.",
     }
   ],
   "visualStyle": {
@@ -181,7 +181,7 @@ Génère le JSON :
       "visualStyle": "string — locked phrase + précisions de scène",
       "audio": "string",
       "dialogue": "string|null — EXACTEMENT le dialogue verrouillé de cette scène, ou null",
-      "videoPrompt": "string EN — prompt vidéo professionnel complet",
+      "videoPrompt": "string FR — prompt scène structuré complet (pas un résumé)",
       "continuityNotes": "string — lien avec la scène précédente"
     }
   ]

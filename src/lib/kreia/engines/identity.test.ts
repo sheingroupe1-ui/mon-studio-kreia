@@ -33,7 +33,7 @@ function style(partial: Partial<VisualStyleAnalysis> = {}): VisualStyleAnalysis 
 }
 
 describe("composeCharacterImagePrompt", () => {
-  it("weaves style into the character prompt instead of a separate STYLE block", () => {
+  it("builds a locked fruit-humanoid dossier with style and species rules", () => {
     const character: CharacterSheet = {
       id: "FRUIT_CHARACTER_01",
       designation: "Fraise",
@@ -63,8 +63,9 @@ describe("composeCharacterImagePrompt", () => {
     const prompt = composeCharacterImagePrompt(character, analysis);
     assert.match(prompt, /stylized 3D cinematic/);
     assert.match(prompt, /fraise/i);
-    assert.equal(/^\s*STYLE\s*:/m.test(prompt), false);
-    assert.match(prompt, /Not a human/i);
+    assert.match(prompt, /STYLE VISUEL/);
+    assert.match(prompt, /pas un humain/i);
+    assert.match(prompt, /APPARENCE PHYSIQUE VERROUILLÉE/);
   });
 
   it("does not invent wings for an angel without observed wings", () => {
@@ -94,8 +95,9 @@ describe("composeCharacterImagePrompt", () => {
     };
     const analysis = { visualStyle: style({ lockedStylePhrase: "photoreal cinematic" }) } as VideoAnalysis;
     const prompt = composeCharacterImagePrompt(character, analysis);
-    assert.match(prompt, /Do not invent wings/);
+    assert.match(prompt, /Ne pas inventer d'ailes/);
     assert.match(prompt, /photoreal cinematic/);
+    assert.match(prompt, /ANGE HUMANOÏDE/);
   });
 
   it("includes observed relationships in the identity paragraph", () => {

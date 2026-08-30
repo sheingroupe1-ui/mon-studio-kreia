@@ -3,6 +3,7 @@ import { enforceProductionDialogues, fitDialoguesToScenes, formatLockedDialogue,
 import { validateIsolatedProduction } from "./guards";
 import { sceneRelationshipNotes } from "./relationships";
 import { composeCharacterImagePrompt, enforceProductionIdentity, identityParagraph } from "./identity";
+import { composeSceneDossier } from "./prompt-dossier";
 import { expandCharacterIds } from "./continuity";
 import { chat, fail, NETWORK_MESSAGE, type OkErr } from "../llm";
 import { extractJson, parseProduction } from "../parse";
@@ -34,30 +35,36 @@ function localCharacters(analysis: VideoAnalysis): ProductionPlan["characters"] 
   }));
 }
 
-function fallbackScene(analysis: VideoAnalysis, index: number): SceneProduction {
+function fallbackScene(analysis: VideoAnalysis, index: number, existing?: SceneProduction): SceneProduction {
   const scene = analysis.scenes[index];
-  const n = scene?.number ?? index + 1;
+  const n = existing?.number ?? scene?.number ?? index + 1;
   const locked = formatLockedDialogue(linesForScene(analysis.dialogues?.lines ?? [], n));
-  const who = scene ? expandCharacterIds(scene.characters, analysis.characters) : "";
+  const presentIds = [
+    ...new Set(
+      [
+        ...(existing?.characters ?? scene?.characters ?? []),
+        ...linesForScene(analysis.dialogues?.lines ?? [], n).map((l) => l.speakerId),
+      ].filter((id): id is string => Boolean(id)),
+    ),
+  ];
   const style = analysis.visualStyle.lockedStylePhrase;
-  const spoken = locked
-    ? `Spoken French dialogue, one speaker at a time, others mouths closed: ${locked}`
-    : "No spoken dialogue.";
-  return {
+  const merged: SceneProduction = {
     number: n,
-    duration: 10,
-    characters: scene?.characters ?? [],
-    location: scene?.setting ?? "",
-    action: scene?.action ?? "",
-    emotion: scene?.emotion ?? "",
-    camera: scene?.camera ?? "",
-    lighting: scene?.lighting ?? "",
-    visualStyle: style,
-    audio: scene?.audio ?? "",
-    dialogue: scene?.dialogue ?? (locked || null),
-    videoPrompt: `${style}. ${scene?.setting ?? ""}. ${who}. Action: ${scene?.action ?? ""}. Camera: ${scene?.camera ?? ""}. ${spoken} Continuity with the previous shot. Coherent anatomy.`,
-    continuityNotes: "Même identité, mêmes traits, même style.",
+    duration: existing?.duration ?? 10,
+    characters: presentIds.length ? presentIds : (scene?.characters ?? []),
+    location: existing?.location || scene?.setting || "",
+    action: existing?.action || scene?.action || "",
+    emotion: existing?.emotion || scene?.emotion || "",
+    camera: existing?.camera || scene?.camera || "",
+    lighting: existing?.lighting || scene?.lighting || "",
+    visualStyle: existing?.visualStyle || style,
+    audio: existing?.audio || scene?.audio || "",
+    dialogue: existing?.dialogue ?? scene?.dialogue ?? (locked || null),
+    videoPrompt: "",
+    continuityNotes: existing?.continuityNotes || "Même identité, mêmes traits, même style, même décor sauf action explicite.",
   };
+  merged.videoPrompt = composeSceneDossier(analysis, index, merged);
+  return merged;
 }
 
 function emptyPlan(analysis: VideoAnalysis): ProductionPlan {
@@ -282,20 +289,11 @@ function sealPlan(plan: ProductionPlan, analysis: VideoAnalysis, input: Generate
   const durations = packDurations(duration);
   const scenes = Array.from({ length: expected }, (_, i) => {
     const existing = plan.scenes.find((s) => s.number === i + 1) ?? plan.scenes[i];
-    const built = fallbackScene(analysis, i);
+    const built = fallbackScene(analysis, i, existing);
     return {
       ...built,
-      location: existing?.location || built.location,
-      action: existing?.action || built.action,
-      emotion: existing?.emotion || built.emotion,
-      camera: existing?.camera || built.camera,
-      lighting: existing?.lighting || built.lighting,
-      visualStyle: existing?.visualStyle || built.visualStyle,
-      audio: existing?.audio || built.audio,
-      number: i + 1,
       duration: durations[i] ?? 10,
-      dialogue: built.dialogue,
-      videoPrompt: built.videoPrompt,
+      videoPrompt: composeSceneDossier(analysis, i, { ...built, duration: durations[i] ?? 10 }),
     };
   });
   let production = { ...plan, scenes };
