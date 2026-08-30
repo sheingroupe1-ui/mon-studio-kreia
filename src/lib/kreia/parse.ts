@@ -460,6 +460,7 @@ function parseSceneProduction(raw: unknown, index: number): SceneProduction {
     dialogue: strOrNull(o.dialogue),
     videoPrompt: str(o.videoPrompt),
     continuityNotes: str(o.continuityNotes),
+    formattedPrompt: str(o.formattedPrompt),
   };
 }
 
@@ -475,6 +476,7 @@ export function parseProduction(raw: unknown): ProductionPlan {
           id: str(r.id, characterId(i + 1)),
           bible: str(r.bible),
           imagePrompt: str(r.imagePrompt),
+          formattedSheet: str(r.formattedSheet),
         };
       })
     : [];

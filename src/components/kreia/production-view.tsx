@@ -125,15 +125,15 @@ export function ProductionView({
                       Modifier
                     </Button>
                   ) : null}
-                  <CopyButton text={c.imagePrompt} />
+                  <CopyButton text={c.formattedSheet || c.imagePrompt} />
                 </div>
               </div>
-              <Field label="Bible de continuité" value={c.bible} />
+              <Field label="Bible de continuité" value={c.formattedSheet || c.bible} />
               <div className="mt-3">
                 <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--fg-subtle)]">
-                  Prompt image de référence
+                  Fiche personnage à copier
                 </p>
-                <PromptBlock text={c.imagePrompt} />
+                <PromptBlock text={c.formattedSheet || c.imagePrompt} />
               </div>
             </article>
           ))}
@@ -175,7 +175,7 @@ export function ProductionView({
                       Modifier
                     </Button>
                   ) : null}
-                  <CopyButton text={scene.videoPrompt} />
+                  <CopyButton text={scene.formattedPrompt || scene.videoPrompt} />
                 </div>
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -243,9 +243,9 @@ export function ProductionView({
               ) : null}
               <div className="mt-4">
                 <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--fg-subtle)]">
-                  Prompt vidéo
+                  Prompt scène — copier dans Flow / Grok / Veo 3
                 </p>
-                <PromptBlock text={scene.videoPrompt} />
+                <PromptBlock text={scene.formattedPrompt || scene.videoPrompt} />
               </div>
             </article>
             );

@@ -19,7 +19,7 @@ export function validateIsolatedProduction(
       return `Scène ${scene.number} dure ${scene.duration} s (> 10).`;
     }
     const owned = linesForScene(analysis.dialogues?.lines ?? [], scene.number);
-    const prompt = scene.videoPrompt ?? "";
+    const prompt = `${scene.videoPrompt ?? ""}\n${scene.formattedPrompt ?? ""}`;
     const leaked = (analysis.dialogues?.lines ?? []).filter((line) => {
       if (line.sceneNumber === scene.number) return false;
       const text = (line.sourceText || line.displayText || "").trim();

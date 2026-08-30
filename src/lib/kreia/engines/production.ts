@@ -2,7 +2,7 @@ import { collapseAnalysisScenes, expectedSceneCount, inferSourceDuration, packDu
 import { enforceProductionDialogues, fitDialoguesToScenes, formatLockedDialogue, linesForScene } from "./dialogues";
 import { validateIsolatedProduction } from "./guards";
 import { sceneRelationshipNotes } from "./relationships";
-import { composeCharacterImagePrompt, enforceProductionIdentity, identityParagraph } from "./identity";
+import { composeCharacterDossier, composeCharacterImagePrompt, enforceProductionIdentity, identityParagraph } from "./identity";
 import { composeSceneDossier } from "./prompt-dossier";
 import { expandCharacterIds } from "./continuity";
 import { chat, fail, NETWORK_MESSAGE, type OkErr } from "../llm";
@@ -17,7 +17,7 @@ import type {
   VideoAnalysis,
 } from "../types";
 
-const SCENE_TOKENS = 1800;
+const SCENE_TOKENS = 3200;
 
 export type ProductionSliceResult = {
   checkpoint: AnalysisCheckpoint;
@@ -28,11 +28,43 @@ export type ProductionSliceResult = {
 };
 
 function localCharacters(analysis: VideoAnalysis): ProductionPlan["characters"] {
-  return analysis.characters.map((c) => ({
-    id: c.id,
-    bible: identityParagraph(c),
-    imagePrompt: composeCharacterImagePrompt(c, analysis),
-  }));
+  return analysis.characters.map((c) => {
+    const sheet = composeCharacterDossier(c, analysis);
+    return {
+      id: c.id,
+      bible: identityParagraph(c),
+      imagePrompt: composeCharacterImagePrompt(c, analysis),
+      formattedSheet: sheet,
+    };
+  });
+}
+
+function compactVideoPrompt(scene: SceneProduction, locked: string | null): string {
+  const spoken = locked ? `Répliques FR, un locuteur à la fois : ${locked}` : "Aucun dialogue.";
+  return [scene.visualStyle, scene.location, scene.action, scene.camera && `Caméra : ${scene.camera}`, spoken]
+    .filter(Boolean)
+    .join(". ");
+}
+
+function promptLeaksOtherScene(prompt: string, analysis: VideoAnalysis, sceneNumber: number): boolean {
+  return (analysis.dialogues?.lines ?? []).some((line) => {
+    if (line.sceneNumber === sceneNumber) return false;
+    const text = (line.displayText || line.sourceText).trim();
+    return text.length >= 12 && prompt.includes(text);
+  });
+}
+
+function pickFormattedPrompt(
+  llm: string | undefined,
+  composed: string,
+  analysis: VideoAnalysis,
+  sceneNumber: number,
+): string {
+  const text = (llm ?? "").trim();
+  if (!text) return composed;
+  if (promptLeaksOtherScene(text, analysis, sceneNumber)) return composed;
+  if (!/SCÈNE|DURÉE|STYLE D'ANIMATION|RÉPLIQUES/.test(text)) return composed;
+  return text;
 }
 
 function fallbackScene(analysis: VideoAnalysis, index: number, existing?: SceneProduction): SceneProduction {
@@ -60,10 +92,17 @@ function fallbackScene(analysis: VideoAnalysis, index: number, existing?: SceneP
     visualStyle: existing?.visualStyle || style,
     audio: existing?.audio || scene?.audio || "",
     dialogue: existing?.dialogue ?? scene?.dialogue ?? (locked || null),
-    videoPrompt: "",
+    videoPrompt: existing?.videoPrompt || "",
     continuityNotes: existing?.continuityNotes || "Même identité, mêmes traits, même style, même décor sauf action explicite.",
+    formattedPrompt: existing?.formattedPrompt || "",
   };
-  merged.videoPrompt = composeSceneDossier(analysis, index, merged);
+  if (!merged.videoPrompt) merged.videoPrompt = compactVideoPrompt(merged, locked);
+  merged.formattedPrompt = pickFormattedPrompt(
+    merged.formattedPrompt,
+    composeSceneDossier(analysis, index, merged),
+    analysis,
+    n,
+  );
   return merged;
 }
 
@@ -143,13 +182,44 @@ JSON :
 ${first ? `{
   "hook": { "reconstructed":"", "visualPrompt":"", "duration": 8, "mechanism":"" },
   "scenario": { "logline":"", "synopsis":"", "structure":"", "dialoguesNote":"" },
-  "characters": [{ "id":"", "bible":"", "imagePrompt":"" }],
+  "characters": [{ "id":"", "bible":"", "imagePrompt":"", "formattedSheet":"" }],
   "visualStyle": { "lockedPhrase":"", "productionNotes":"", "doNot":[] },
-  "scene": { "number": ${index + 1}, "duration": 8, "characters":[], "location":"", "action":"", "emotion":"", "camera":"", "lighting":"", "visualStyle":"", "audio":"", "dialogue": null, "videoPrompt":"", "continuityNotes":"" }
+  "scene": { "number": ${index + 1}, "duration": 8, "characters":[], "location":"", "action":"", "emotion":"", "camera":"", "lighting":"", "visualStyle":"", "audio":"", "dialogue": null, "videoPrompt":"", "continuityNotes":"", "formattedPrompt":"" }
 }` : `{
-  "scene": { "number": ${index + 1}, "duration": 8, "characters":[], "location":"", "action":"", "emotion":"", "camera":"", "lighting":"", "visualStyle":"", "audio":"", "dialogue": null, "videoPrompt":"", "continuityNotes":"" }
+  "scene": { "number": ${index + 1}, "duration": 8, "characters":[], "location":"", "action":"", "emotion":"", "camera":"", "lighting":"", "visualStyle":"", "audio":"", "dialogue": null, "videoPrompt":"", "continuityNotes":"", "formattedPrompt":"" }
 }`}
-duration ∈ {6, 8, 10}. Réplique parlée en FRANÇAIS dans videoPrompt si un dialogue est verrouillé.`;
+duration ∈ {6, 8, 10}.
+videoPrompt = paragraphe interne court.
+formattedPrompt = BLOC COMPLET à copier-coller, gabarit EXACT (titres et emojis conservés) :
+
+🎬 SCÈNE ${sceneNo} — [titre court]
+⏱️ DURÉE : {duration} SECONDES
+🎨 STYLE D'ANIMATION
+[style visuel développé à partir de : ${analysis.visualStyle.lockedStylePhrase}]
+👥 PERSONNAGES PRÉSENTS
+[un nom par ligne, UNIQUEMENT les personnages de cette scène]
+📍 LIEU
+[description exploitable]
+CONTINUITÉ DU DÉCOR ABSOLUE :
+[éléments fixes]
+👕 VÊTEMENTS
+[par personnage présent]
+📖 DESCRIPTION DE LA SCÈNE
+[ce qui se passe réellement — n'invente rien]
+🎭 ÉMOTIONS ET JEU D'ACTEUR
+[un bloc par personnage présent : émotion, regard, expression, posture, gestes]
+🎙️ RÉPLIQUES
+[répliques EXACTES fournies ci-dessus, ou « Aucun dialogue. »]
+📊 TOTAL DIALOGUES : X CARACTÈRES
+🎥 DÉCOUPAGE CAMÉRA
+[0–… jusqu'à {duration} s, jamais plus]
+👄 SYNCHRONISATION LABIALE
+🔊 VOLUME ET TON DES VOIX
+🎬 BLOC COMPLET FLOW / GROK / VEO 3
+Story Rule / Visible Characters Only / Location / Camera / Timeline / Acting / Strict Rules
+
+formattedSheet (uniquement si first) : fiche complète selon le type (humain / fruit humanoïde / ange). Style visuel intégré. Ne pas inventer d'ailes, d'espèce ou de vêtements absents.
+Interdit : réplique inventée, personnage absent listé, caméra au-delà de la durée.`;
 }
 
 export async function runOneProductionScene(
@@ -183,7 +253,17 @@ export async function runOneProductionScene(
       if (first) {
         if (parsed.hook.reconstructed) plan.hook = parsed.hook;
         if (parsed.scenario.logline) plan.scenario = parsed.scenario;
-        if (parsed.characters.length) plan.characters = parsed.characters;
+        if (parsed.characters.length) {
+          plan.characters = parsed.characters.map((entry) => {
+            const sheet = analysis.characters.find((c) => c.id === entry.id);
+            const dossier = sheet ? composeCharacterDossier(sheet, analysis) : "";
+            return {
+              ...entry,
+              formattedSheet: entry.formattedSheet?.trim() || dossier,
+              imagePrompt: entry.imagePrompt || dossier,
+            };
+          });
+        }
         if (parsed.visualStyle.lockedPhrase) plan.visualStyle = parsed.visualStyle;
       }
       parsedScene = parsed.scenes[0] ?? null;
@@ -191,7 +271,7 @@ export async function runOneProductionScene(
       parsedScene = null;
     }
   }
-  if (!parsedScene) parsedScene = fallbackScene(analysis, index);
+  parsedScene = fallbackScene(analysis, index, parsedScene ?? undefined);
   parsedScene.number = analysis.scenes[index]?.number ?? index + 1;
   if (parsedScene.duration > 10) parsedScene.duration = 10;
   const scenes = plan.scenes.filter((s) => s.number !== parsedScene!.number);
@@ -287,13 +367,20 @@ function sealPlan(plan: ProductionPlan, analysis: VideoAnalysis, input: Generate
   const duration = sourceDuration(input);
   const expected = expectedSceneCount(duration);
   const durations = packDurations(duration);
-  const scenes = Array.from({ length: expected }, (_, i) => {
+  const scenes: SceneProduction[] = Array.from({ length: expected }, (_, i) => {
     const existing = plan.scenes.find((s) => s.number === i + 1) ?? plan.scenes[i];
     const built = fallbackScene(analysis, i, existing);
+    const duration = durations[i] ?? 10;
+    const withDuration = { ...built, duration };
     return {
-      ...built,
-      duration: durations[i] ?? 10,
-      videoPrompt: composeSceneDossier(analysis, i, { ...built, duration: durations[i] ?? 10 }),
+      ...withDuration,
+      videoPrompt: withDuration.videoPrompt || compactVideoPrompt(withDuration, withDuration.dialogue),
+      formattedPrompt: pickFormattedPrompt(
+        withDuration.formattedPrompt,
+        composeSceneDossier(analysis, i, withDuration),
+        analysis,
+        withDuration.number,
+      ),
     };
   });
   let production = { ...plan, scenes };

@@ -258,7 +258,7 @@ export function enforceProductionIdentity(
       return { ...entry, imagePrompt: weaveStyleIntoPrompt(entry.imagePrompt, analysis) };
     }
     const dossier = composeCharacterDossier(sheet, analysis);
-    return { ...entry, bible: dossier, imagePrompt: dossier };
+    return { ...entry, bible: identityParagraph(sheet), imagePrompt: dossier, formattedSheet: dossier };
   });
   const scenes = production.scenes.map((scene) => ({
     ...scene,

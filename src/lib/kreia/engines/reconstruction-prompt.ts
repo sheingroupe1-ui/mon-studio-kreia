@@ -59,7 +59,9 @@ RÈGLES
 - Continuité : vêtements, lumière, décor, époque, météo. Une scène est la suite de la précédente.
 - Ne pas changer de style (pas de photoréaliste si la source est 3D cartoon, etc.).
 - Prompts professionnels en français, structurés, prêts à copier-coller (Flow / Grok / Veo 3).
-- videoPrompt : dossier de production FR structuré (style, personnages présents uniquement, lieu, vêtements, description, jeu d'acteur, répliques FR exactes de CETTE scène, total caractères, caméra, synchro labiale, bloc Flow/Veo). Jamais un résumé d'une ligne. Jamais les dialogues d'une autre scène. Si aucun dialogue : « Aucun dialogue. »
+- formattedPrompt (scène) : dossier FR structuré avec les titres du gabarit (scène, durée, style, personnages présents uniquement, lieu, vêtements, description, jeu, répliques exactes de CETTE scène ou « Aucun dialogue. », total caractères, caméra dans la durée, synchro, bloc Flow/Veo).
+- formattedSheet (personnage, 1re scène) : fiche complète selon le type (humain / fruit humanoïde / ange), style visuel intégré.
+- videoPrompt / imagePrompt / bible restent des champs internes plus courts.
 - Si un dialogue est verrouillé pour la scène, le videoPrompt DOIT contenir la réplique en FRANÇAIS (sens fidèle) ET son interprétation observée (émotion, expression, geste, regard, ton, larmes). Interdit d'inventer ou d'adoucir. Aucune réplique parlée dans une autre langue.
 - Si des larmes / un cri / un tremblement / un geste important sont dans l'analyse, les reproduire. Ne pas inventer de gestes absents.
 - imagePrompt : portrait de référence, cadrage plan américain ou portrait, fond simple cohérent avec l'univers, éclairage adapté.
@@ -159,8 +161,9 @@ Génère le JSON :
   "characters": [
     {
       "id": "CHARACTER_01",
-      "bible": "string FR — fiche complète (identité, apparence verrouillée, visage, corps, vêtements, style visuel intégré, continuité, interdictions)",
-      "imagePrompt": "string FR — même fiche complète, prête à copier-coller, style visuel intégré. Fruit humanoïde = le fruit EST le corps, pas un humain.",
+      "bible": "string FR — résumé interne d'identité",
+      "imagePrompt": "string FR — portrait de référence",
+      "formattedSheet": "string FR — fiche complète gabarit humain / fruit humanoïde / ange, style visuel intégré, rien d'inventé"
     }
   ],
   "visualStyle": {
@@ -181,7 +184,8 @@ Génère le JSON :
       "visualStyle": "string — locked phrase + précisions de scène",
       "audio": "string",
       "dialogue": "string|null — EXACTEMENT le dialogue verrouillé de cette scène, ou null",
-      "videoPrompt": "string FR — prompt scène structuré complet (pas un résumé)",
+      "videoPrompt": "string — paragraphe interne court",
+      "formattedPrompt": "string FR — bloc complet gabarit scène (titres conservés), uniquement cette scène",
       "continuityNotes": "string — lien avec la scène précédente"
     }
   ]

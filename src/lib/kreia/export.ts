@@ -62,7 +62,10 @@ export function projectToMarkdown(project: KreiaProject): string {
       block("Synopsis", p.scenario.synopsis),
     );
     for (const c of p.characters) {
-      lines.push(block(`Fiche ${c.id}`, c.bible), block(`Prompt image ${c.id}`, c.imagePrompt));
+      lines.push(
+        block(`Fiche ${c.id}`, c.formattedSheet || c.bible),
+        block(`Prompt image ${c.id}`, c.formattedSheet || c.imagePrompt),
+      );
     }
     lines.push(
       block("Style de production", `${p.visualStyle.lockedPhrase}\n${p.visualStyle.productionNotes}`),
@@ -78,8 +81,8 @@ export function projectToMarkdown(project: KreiaProject): string {
             `Audio : ${s.audio}`,
             s.dialogue ? `Dialogue source : ${s.dialogue}` : "Dialogue : aucun",
             "",
-            "Prompt vidéo :",
-            s.videoPrompt,
+            "Prompt scène :",
+            s.formattedPrompt || s.videoPrompt,
           ].join("\n"),
         ),
       );

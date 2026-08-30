@@ -256,6 +256,7 @@ export type CharacterProduction = {
   id: string;
   bible: string;
   imagePrompt: string;
+  formattedSheet?: string;
 };
 
 export type SceneProduction = {
@@ -272,6 +273,7 @@ export type SceneProduction = {
   dialogue: string | null;
   videoPrompt: string;
   continuityNotes: string;
+  formattedPrompt?: string;
 };
 
 export type ProductionPlan = {

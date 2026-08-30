@@ -116,8 +116,8 @@ describe("composeSceneDossier", () => {
     } as unknown as VideoAnalysis;
 
     const prompt = composeSceneDossier(analysis, 0, { duration: 10 });
-    assert.match(prompt, /SCÈNE 1/);
-    assert.match(prompt, /DURÉE : 10 SECONDES/);
+    assert.match(prompt, /🎬 SCÈNE 1/);
+    assert.match(prompt, /⏱️ DURÉE : 10 SECONDES/);
     assert.match(prompt, /Marie/);
     assert.match(prompt, /Paul/);
     assert.equal(prompt.includes("Jean"), false);
@@ -154,7 +154,8 @@ describe("composeSceneDossier", () => {
       dialogues: { language: "fr", source: "unavailable", rawTranscript: null, lines: [] },
     } as unknown as VideoAnalysis;
     const prompt = composeSceneDossier(analysis, 0);
+    assert.match(prompt, /🎙️ RÉPLIQUES/);
     assert.match(prompt, /Aucun dialogue/);
-    assert.match(prompt, /TOTAL DIALOGUES : 0 CARACTÈRES/);
+    assert.match(prompt, /📊 TOTAL DIALOGUES : 0 CARACTÈRES/);
   });
 });
