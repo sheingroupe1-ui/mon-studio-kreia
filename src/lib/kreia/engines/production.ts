@@ -146,6 +146,7 @@ ${relations ? `\nRELATIONS DANS CETTE SCÈNE\n${relations}` : ""}
 
 SCÈNE ANALYSÉE (fenêtre locale uniquement)
 ${JSON.stringify(scenePayload, null, 2)}
+Le champ action décrit le déroulement COMPLET de cette fenêtre, y compris toute construction ou évolution progressive (escalier qui grandit, pile qui s'élève, personnage qui avance). Conserver cette progression intégralement dans formattedPrompt — ne pas la réduire à un instantané.
 Personnages présents :
 ${who}
 DIALOGUES DE CETTE SCÈNE UNIQUEMENT — interdiction d'ajouter une réplique d'une autre scène : ${locked ?? "aucun — ne pas inventer"}

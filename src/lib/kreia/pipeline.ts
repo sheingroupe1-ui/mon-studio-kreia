@@ -453,9 +453,22 @@ ${JSON.stringify(checkpoint.visualStyle ?? styleFromUserChoice(data.chosenStyleI
   }
 }
 
-function framesInWindow(frames: FrameCapture[], start: number, end: number, max = 3): FrameCapture[] {
-  const inW = frames.filter((f) => f.t >= start - 0.05 && f.t <= end + 0.05);
-  return inW.slice(0, max);
+function framesInWindow(frames: FrameCapture[], start: number, end: number, max = 4): FrameCapture[] {
+  const inW = frames
+    .filter((f) => f.t >= start - 0.05 && f.t <= end + 0.05)
+    .sort((a, b) => a.t - b.t);
+  if (inW.length <= max) return inW;
+  if (max <= 1) return inW.slice(0, 1);
+  const picked: FrameCapture[] = [];
+  const seen = new Set<number>();
+  for (let i = 0; i < max; i += 1) {
+    const idx = Math.round((i * (inW.length - 1)) / (max - 1));
+    const frame = inW[idx];
+    if (!frame || seen.has(idx)) continue;
+    seen.add(idx);
+    picked.push(frame);
+  }
+  return picked;
 }
 
 async function runOneSegment(data: AnalyzeInput, frames: FrameCapture[], checkpoint: AnalysisCheckpoint) {
@@ -487,7 +500,13 @@ async function runOneSegment(data: AnalyzeInput, frames: FrameCapture[], checkpo
     return;
   }
   const characters = checkpoint.characters ?? [];
-  const picked = framesInWindow(frames, seg.start, seg.end, 2);
+  const picked = framesInWindow(frames, seg.start, seg.end, 4);
+  const previousActionSummary = notes
+    .slice(0, i)
+    .map((n) => (typeof n.action === "string" ? n.action.trim() : ""))
+    .filter(Boolean)
+    .slice(-2)
+    .join(" | ");
   const transcriptSlice = sliceTranscriptForWindow(
     checkpoint.transcript,
     seg.start,
@@ -504,6 +523,7 @@ async function runOneSegment(data: AnalyzeInput, frames: FrameCapture[], checkpo
           role: "system",
           content: `Tu analyses UNIQUEMENT ce segment (≤ 10 s). Ignore le reste de la vidéo.
 Réutilise les Character ID fournis.
+Les images fournies sont ordonnées dans le temps, du début à la fin de ce segment. Compare-les pour détecter toute évolution ou construction progressive : un élément qui apparaît, grandit, se construit, se déplace, ou change visiblement entre la première et la dernière image (ex. un empilement d'objets qui grossit, un escalier de lingots ou de livres qui se construit marche par marche, un personnage qui avance). Si une telle progression existe, décris-la explicitement dans "action" : le début, ce qui change, et l'état à la fin du segment. Ne décris pas seulement un instantané si plusieurs images montrent une évolution claire. N'invente rien qui n'est pas visible.
 ${transcriptSlice.trim()
   ? "N'invente pas de répliques hors du transcript de CE segment."
   : "Aucune parole n'a été transcrite pour ce segment. dialogues DOIT être []. N'invente aucune réplique, même si une image suggère qu'on parle."}
@@ -517,6 +537,8 @@ ${fruit}${angel}`,
               type: "text",
               text: `Segment ${i + 1}/${segs.length} — ${formatClock(seg.start)} → ${formatClock(seg.end)}
 Personnages connus : ${characters.map((c) => `${c.id} (${c.name || c.designation})`).join(", ") || "aucun"}
+Résumé des segments précédents (pour continuité, ne pas répéter mot pour mot) :
+${previousActionSummary || "(aucun, c'est le premier segment)"}
 TRANSCRIPT DE CE SEGMENT UNIQUEMENT :
 ${transcriptSlice || "(aucune parole horodatée dans cette fenêtre — ne pas inventer)"}
 ${data.userNotes ?? ""}`,
